@@ -1,25 +1,33 @@
 #!/bin/bash
-# usage: build.sh <package> "<App Name>" <url> <#color> <out.apk>
+# Build a thin WebView APK.
+# usage: ./android/build.sh <package> "<App name>" <https-url> <out.apk>
 set -euo pipefail
-SDK=${ANDROID_HOME:-$HOME/android-sdk}
-BT=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
-JAR=$(ls -d "$SDK"/platforms/android-*/android.jar | sort -V | tail -1)
-D=$(dirname "$(readlink -f "$0")")
-T=$(mktemp -d)
-P=$1
-mkdir -p "$T/res/drawable" "$T/java/${P//.//}" "$T/obj" "$T/dex"
-sed "s/PKG/$P/;s|APPNAME|$2|" "$D/src/AndroidManifest.xml" > "$T/AndroidManifest.xml"
-sed "s/COLOR/$4/" "$D/src/ic.xml" > "$T/res/drawable/ic.xml"
-sed "s/PKG/$P/;s|APPURL|$3|" "$D/src/MainActivity.java" > "$T/java/${P//.//}/MainActivity.java"
-"$BT/aapt2" compile --dir "$T/res" -o "$T/res.zip"
-"$BT/aapt2" link -I "$JAR" --manifest "$T/AndroidManifest.xml" -o "$T/u.apk" "$T/res.zip" --min-sdk-version 24 --target-sdk-version 34
-javac --release 8 -nowarn -cp "$JAR" -d "$T/obj" $(find "$T/java" -name '*.java')
-"$BT/d8" --min-api 24 --lib "$JAR" --output "$T/dex" $(find "$T/obj" -name '*.class')
-(cd "$T/dex" && jar uf "$T/u.apk" classes.dex)
-"$BT/zipalign" -f 4 "$T/u.apk" "$T/a.apk"
-KS=${KEYSTORE:-$D/demo.keystore}
-if [ ! -f "$KS" ]; then
-  keytool -genkeypair -keystore "$KS" -storepass demo1234 -keypass demo1234 -alias demo -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=HCP PTT Demo" >/dev/null 2>&1
+SDK="${ANDROID_HOME:-$HOME/android-sdk}"
+BT="$SDK/build-tools/34.0.0"
+JAR="$SDK/platforms/android-34/android.jar"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+WORK="$(mktemp -d)"
+PKG="$1"
+APP_NAME="$2"
+APP_URL="$3"
+OUT="$4"
+JAVA_DIR="$WORK/java/${PKG//.//}"
+mkdir -p "$WORK/res/drawable" "$JAVA_DIR" "$WORK/obj" "$WORK/dex"
+sed "s/PKG/$PKG/;s|APPNAME|$APP_NAME|" "$ROOT/src/AndroidManifest.xml" > "$WORK/AndroidManifest.xml"
+cp "$ROOT/src/ic.xml" "$WORK/res/drawable/ic.xml"
+sed "s/PKG/$PKG/;s|APPURL|$APP_URL|" "$ROOT/src/MainActivity.java" > "$JAVA_DIR/MainActivity.java"
+sed "s/PKG/$PKG/" "$ROOT/src/KeepAliveService.java" > "$JAVA_DIR/KeepAliveService.java"
+"$BT/aapt2" compile --dir "$WORK/res" -o "$WORK/res.zip"
+"$BT/aapt2" link -I "$JAR" --manifest "$WORK/AndroidManifest.xml" -o "$WORK/unsigned.apk" "$WORK/res.zip"
+javac -source 8 -target 8 -encoding UTF-8 -nowarn -cp "$JAR" -d "$WORK/obj" $(find "$JAVA_DIR" -name '*.java')
+"$BT/d8" --release --min-api 24 --lib "$JAR" --output "$WORK/dex" $(find "$WORK/obj" -name '*.class')
+(cd "$WORK/dex" && jar uf "$WORK/unsigned.apk" classes.dex)
+"$BT/zipalign" -f 4 "$WORK/unsigned.apk" "$WORK/aligned.apk"
+KEYSTORE="${KEYSTORE:-$ROOT/debug.keystore}"
+if [ ! -f "$KEYSTORE" ]; then
+  keytool -genkeypair -keystore "$KEYSTORE" -storepass hydptt123 -keypass hydptt123 -alias hydptt \
+    -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Hyderabad Police PTT Demo" >/dev/null
 fi
-"$BT/apksigner" sign --ks "$KS" --ks-pass pass:demo1234 --out "$5" "$T/a.apk"
-rm -rf "$T"
+"$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:hydptt123 --key-pass pass:hydptt123 --out "$OUT" "$WORK/aligned.apk"
+rm -rf "$WORK"
+echo "Wrote $OUT"

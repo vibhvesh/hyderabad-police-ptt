@@ -1,0 +1,34 @@
+export type GeoFix = {
+  lat: number
+  lon: number
+  acc: number | null
+}
+
+export type LangId = 'te' | 'en' | 'hi'
+export type EngineId = 'whisper' | 'elevenlabs'
+
+export type ChatMessage = {
+  key: string
+  name: string
+  mine: boolean
+  t0: number
+  dur: number
+  url: string
+  loc: GeoFix | null
+  transcript: string | null
+  error: string | null
+  pending: boolean
+}
+
+export type LangOption = {
+  id: LangId
+  label: string
+  whisper: string
+  eleven: string
+}
+
+export const LANGUAGES: readonly LangOption[] = [
+  { id: 'te', label: 'Telugu', whisper: 'telugu', eleven: 'te' },
+  { id: 'en', label: 'English', whisper: 'english', eleven: 'en' },
+  { id: 'hi', label: 'Hindi', whisper: 'hindi', eleven: 'hi' },
+]

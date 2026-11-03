@@ -1,10 +1,28 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
 node_modules
-.env
+dist
+android/debug.keystore
+*.keystore
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
-android/*.apk
-android/*.keystore
-releases/*.apk
-!releases/hyderabad-police-ptt-demo.apk
-pi/__pycache__
-*.pyc
-!releases/HyderabadPolicePTT.apk
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+*.idsig
