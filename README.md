@@ -50,10 +50,10 @@ The service starts on boot and restarts if it crashes. It joins the same MQTT ch
 ## Android
 
 ```bash
-android/build.sh demo.hyderabadpolice.ptt "HCP PTT Demo" https://hist-image-success-polyester.trycloudflare.com "#0C2340" releases/hyderabad-police-ptt-demo.apk
+android/build.sh demo.hyderabadpolice.ptt "HCP PTT Demo" https://vibhvesh.github.io/hyderabad-police-ptt/ "#0C2340" releases/HyderabadPolicePTT.apk
 ```
 
-The APK is a WebView with microphone permission. Install with `adb install -r releases/hyderabad-police-ptt-demo.apk`.
+The APK is a WebView with microphone permission. Install with `adb install -r releases/HyderabadPolicePTT.apk`.
 
 ## Layout
 
