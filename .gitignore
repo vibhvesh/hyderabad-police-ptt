@@ -1,0 +1,10 @@
+node_modules
+.env
+.DS_Store
+android/*.apk
+android/*.keystore
+releases/*.apk
+!releases/hyderabad-police-ptt-demo.apk
+pi/__pycache__
+*.pyc
+!releases/HyderabadPolicePTT.apk

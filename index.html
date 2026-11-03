@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hyderabad City Police – PTT Demo</title>
+<meta name="description" content="Demo only – not for professional or operational use.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; font-family: "Source Sans 3", "Segoe UI", sans-serif; background: #0c2340; color: #f4f0e6; }
+  header { display: flex; gap: 12px; align-items: center; padding: 12px 16px; background: #0a1c34; border-bottom: 1px solid rgba(212,180,131,.35); }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 2px 0 0; font-size: 12px; color: #e4d3b0; }
+  .banner { background: #c6a15a; color: #1c1408; text-align: center; font-weight: 700; padding: 8px 12px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+  @media (min-width: 900px) { main { grid-template-columns: 240px 1fr 280px; align-items: start; } }
+  .card { background: #143056; border-radius: 12px; padding: 14px; border: 1px solid rgba(212,180,131,.25); }
+  button, input, select { font: inherit; }
+  button { border: 1px solid rgba(212,180,131,.45); background: #1c406c; color: #f4f0e6; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+  button.primary, button.on { background: #d4b483; color: #1c1408; border-color: #d4b483; }
+  button:disabled { opacity: .5; }
+  input, select { width: 100%; background: #0c2340; color: #f4f0e6; border: 1px solid rgba(212,180,131,.35); border-radius: 8px; padding: 8px; }
+  .channels { display: grid; gap: 6px; }
+  #ptt { width: min(240px, 70vw); height: min(240px, 70vw); border-radius: 50%; display: block; margin: 12px auto; border: 4px solid #d4b483; background: #102848; color: #d4b483; font-weight: 800; letter-spacing: .04em; touch-action: none; }
+  #ptt.on { background: #9d2a22; color: #fff; border-color: #f0b4ae; }
+  #ptt.wait { background: #8a6a2f; color: #1c1408; }
+  .center { text-align: center; }
+  .muted { color: #e4d3b0; font-size: 13px; }
+  #log { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; display: grid; gap: 8px; }
+  #log li { background: #102848; border-radius: 8px; padding: 8px; }
+  .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .badge { font-size: 11px; border: 1px solid rgba(212,180,131,.5); border-radius: 99px; padding: 2px 8px; }
+</style>
+</head>
+<body>
+<header>
+  <svg viewBox="0 0 64 72" width="48" height="54" aria-hidden="true"><path d="M32 4 58 14v22c0 16-11 26-26 32C17 62 6 52 6 36V14L32 4z" fill="#d4b483" opacity=".2"/><path d="M32 4 58 14v22c0 16-11 26-26 32C17 62 6 52 6 36V14L32 4z" fill="none" stroke="#d4b483" stroke-width="3"/><text x="32" y="42" text-anchor="middle" font-size="14" font-weight="700" fill="#f4f0e6">HCP</text></svg>
+  <div>
+    <h1>Hyderabad City Police – PTT Demo</h1>
+    <p>Placeholder emblem — not an official insignia</p>
+  </div>
+</header>
+<div class="banner" role="note">Demo only – not for professional or operational use.</div>
+<main>
+  <section class="card">
+    <h2>Talkgroups</h2>
+    <div class="channels" id="channels"></div>
+    <p class="muted" id="online">0 online</p>
+  </section>
+  <section class="card center">
+    <p class="muted">WHO IS TALKING</p>
+    <h2 id="floor">Channel clear</h2>
+    <button id="ptt" type="button">HOLD TO TALK</button>
+    <p class="muted">Mouse, touch, or spacebar. Release to listen.</p>
+    <p><label>Call sign <input id="callsign" maxlength="32" value="Unit"></label></p>
+    <p><label>Transcription
+      <select id="lang">
+        <option value="te" selected>Telugu</option>
+        <option value="en">English</option>
+        <option value="hi">Hindi</option>
+      </select>
+    </label></p>
+    <p><button id="join" class="primary" type="button">Join</button>
+       <button id="tone" type="button">Send test call</button></p>
+    <p class="muted" id="net">Connecting…</p>
+  </section>
+  <section class="card">
+    <h2>Message history</h2>
+    <ul id="log"><li class="muted">No transmissions on this talkgroup yet.</li></ul>
+  </section>
+</main>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script id="core">
+var PREFIX = "hcp-ptt-demo/";
+var BROKERS = ["wss://broker.emqx.io:8084/mqtt", "wss://broker.hivemq.com:8884/mqtt", "wss://test.mosquitto.org:8081"];
+var CHANNELS = ["control", "traffic", "north", "south", "cyber", "emergency"];
+var CLAIM_GRACE_MS = 400;
+function Radio(mqttLib, opts) {
+  this.mqtt = mqttLib; this.ch = opts.ch || "traffic"; this.on = opts.on || function () {};
+  this.brokers = opts.brokers || BROKERS; this.bi = 0;
+  this.id = opts.id || Math.random().toString(36).slice(2, 10);
+  this.name = null; this.users = {}; this.floor = null; this.talking = false; this.closed = false;
+  this.connect();
+}
+Radio.prototype.topic = function (s) { return PREFIX + this.ch + "/" + s; };
+Radio.prototype.connect = function () {
+  var R = this, url = R.brokers[R.bi % R.brokers.length], opened = false;
+  var c = R.c = R.mqtt.connect(url, { clientId: "hcp_" + R.id + "_" + (Date.now() % 1000000), clean: true, reconnectPeriod: 0, connectTimeout: 8000,
+    will: { topic: R.topic("presence/" + R.id), payload: "", retain: true, qos: 0 } });
+  c.on("connect", function () { opened = true; c.subscribe([R.topic("presence/+"), R.topic("floor"), R.topic("audio"), R.topic("transcript")], function () { if (R.name) R.beat(); }); R.on("net", url); });
+  c.on("message", function (t, p) { R.onMsg(t, p); });
+  c.on("error", function () {});
+  c.on("close", function () { if (R.closed) return; R.on("net", "disconnected"); if (!opened) R.bi++; var retry = setTimeout(function () { try { c.end(true); } catch (e) {} R.connect(); }, opened ? 1000 : 400); if (retry.unref) retry.unref(); });
+  if (!R.timer) { R.timer = setInterval(function () { R.tick(); }, 1000); if (R.timer.unref) R.timer.unref(); }
+};
+Radio.prototype.join = function (name) { this.name = String(name || "Unit").slice(0, 32); this.users[this.id] = { id: this.id, name: this.name, seen: Date.now() }; this.emit(); this.beat(); };
+Radio.prototype.beat = function () { if (!this.name || !this.c.connected) return; this.c.publish(this.topic("presence/" + this.id), JSON.stringify({ id: this.id, name: this.name, ts: Date.now() }), { retain: true }); };
+Radio.prototype.leave = function () { this.release(); this.closed = true; clearInterval(this.timer); if (this.c.connected) this.c.publish(this.topic("presence/" + this.id), "", { retain: true }); try { this.c.end(true); } catch (e) {} };
+Radio.prototype.list = function () { var a = []; for (var k in this.users) a.push(this.users[k]); return a.sort(function (x, y) { return x.name < y.name ? -1 : 1; }); };
+Radio.prototype.emit = function () { this.on("state", { users: this.list(), floor: this.floor, me: this.id }); };
+Radio.prototype.tick = function () {
+  var now = Date.now(), changed = false;
+  if (this.name && (!this.lastBeat || now - this.lastBeat > 5000)) { this.lastBeat = now; this.beat(); }
+  for (var k in this.users) if (now - this.users[k].seen > 15000) { delete this.users[k]; changed = true; }
+  if (this.floor && now - this.floor.seen > 2500) { this.floor = null; changed = true; }
+  if (this.floor && this.floor.id === this.id && this.talking) this.c.publish(this.topic("floor"), JSON.stringify({ t: "hb", id: this.id, name: this.name, ts: this.floor.ts }));
+  if (changed) this.emit();
+};
+function beats(a, b) { return a.ts < b.ts || (a.ts === b.ts && (a.name + a.id) < (b.name + b.id)); }
+Radio.prototype.onMsg = function (topic, payload) {
+  var rest = topic.slice(PREFIX.length + this.ch.length + 1), now = Date.now(), R = this;
+  if (rest.indexOf("presence/") === 0) {
+    var id = rest.slice(10);
+    if (!payload.length) { delete R.users[id]; if (R.floor && R.floor.id === id) R.floor = null; }
+    else { try { var m = JSON.parse(payload.toString()); R.users[id] = { id: id, name: String(m.name).slice(0, 32), seen: now }; } catch (e) {} }
+    R.emit(); return;
+  }
+  if (rest === "floor") {
+    var f; try { f = JSON.parse(payload.toString()); } catch (e) { return; }
+    if (f.t === "claim" || f.t === "hb") {
+      var cur = R.floor;
+      if (!cur || cur.id === f.id || (f.t === "claim" && now - cur.got < CLAIM_GRACE_MS * 3 && beats(f, cur))) R.floor = { id: f.id, name: f.name, ts: f.ts, seen: now, got: cur && cur.id === f.id ? cur.got : now };
+      if (R.users[f.id]) R.users[f.id].seen = now;
+    } else if (f.t === "release" && R.floor && R.floor.id === f.id) R.floor = null;
+    R.emit(); return;
+  }
+  if (rest === "audio") {
+    var b = payload instanceof Uint8Array ? payload : new Uint8Array(payload), n = b[0], who = "";
+    for (var i = 1; i <= n; i++) who += String.fromCharCode(b[i]);
+    if (R.floor && R.floor.id === who && who !== R.id) { R.floor.seen = now; var pcm = Uint8Array.prototype.slice.call(b, 1 + n); R.on("audio", new Int16Array(pcm.buffer, pcm.byteOffset, pcm.byteLength >> 1), who); }
+    return;
+  }
+  if (rest === "transcript") { try { R.on("transcript", JSON.parse(payload.toString())); } catch (e) {} }
+};
+Radio.prototype.claim = function (done) {
+  var R = this;
+  if (R.floor && R.floor.id !== R.id) { done(false); return; }
+  R.talking = true;
+  var ts = Date.now();
+  R.floor = { id: R.id, name: R.name, ts: ts, seen: ts, got: ts };
+  if (R.c.connected) R.c.publish(R.topic("floor"), JSON.stringify({ t: "claim", id: R.id, name: R.name, ts: ts }));
+  R.emit();
+  var wait = setTimeout(function () { var ok = R.talking && R.floor && R.floor.id === R.id; if (!ok) R.talking = false; done(!!ok); }, CLAIM_GRACE_MS); if (wait.unref) wait.unref();
+};
+Radio.prototype.release = function () {
+  if (this.floor && this.floor.id === this.id && this.c.connected) this.c.publish(this.topic("floor"), JSON.stringify({ t: "release", id: this.id }));
+  this.talking = false;
+  if (this.floor && this.floor.id === this.id) this.floor = null;
+  this.emit();
+};
+Radio.prototype.sendAudio = function (i16) {
+  if (!this.talking || !this.floor || this.floor.id !== this.id || !this.c.connected) return false;
+  var n = this.id.length, b = new Uint8Array(1 + n + i16.byteLength);
+  b[0] = n;
+  for (var i = 0; i < n; i++) b[1 + i] = this.id.charCodeAt(i);
+  b.set(new Uint8Array(i16.buffer, i16.byteOffset, i16.byteLength), 1 + n);
+  this.c.publish(this.topic("audio"), typeof Buffer !== "undefined" && !this.browser ? Buffer.from(b) : b);
+  return true;
+};
+Radio.prototype.sendTranscript = function (msg) { if (this.c.connected) this.c.publish(this.topic("transcript"), JSON.stringify(msg)); };
+function TalkCapture(send, opts) {
+  opts = opts || {};
+  this.send = send; this.preroll = opts.preroll || 7; this.tailMs = opts.tailMs || 250;
+  this.ring = []; this.pending = []; this.phase = "idle"; this.holding = false; this.tailUntil = 0; this.onFinish = null;
+}
+TalkCapture.prototype.push = function (frame, now) {
+  this.ring.push(frame); if (this.ring.length > this.preroll) this.ring.shift();
+  if (this.phase === "wait") this.pending.push(frame);
+  else if (this.phase === "live" || this.phase === "tail") this.send(frame);
+  if (this.phase === "tail" && now >= this.tailUntil) this.finish();
+};
+TalkCapture.prototype.down = function () { if (this.phase !== "idle") return false; this.holding = true; this.phase = "wait"; this.pending = this.ring.slice(); return true; };
+TalkCapture.prototype.grant = function (ok, now) {
+  if (!ok) { this.phase = "idle"; this.holding = false; this.pending = []; return; }
+  var frames = this.pending; this.pending = [];
+  this.phase = this.holding ? "live" : "tail";
+  if (this.phase === "tail") {
+    this.tailUntil = now + this.tailMs;
+    var self = this;
+    setTimeout(function () { if (self.phase === "tail") self.finish(); }, this.tailMs + 30);
+  }
+  for (var i = 0; i < frames.length; i++) this.send(frames[i]);
+};
+TalkCapture.prototype.up = function (now) {
+  this.holding = false;
+  if (this.phase === "live") { this.phase = "tail"; this.tailUntil = now + this.tailMs; }
+};
+TalkCapture.prototype.finish = function () { if (this.phase === "idle") return; this.phase = "idle"; this.holding = false; this.pending = []; if (this.onFinish) this.onFinish(); };
+function buildWav(chunks, rate) {
+  var n = 0; chunks.forEach(function (a) { n += a.length; });
+  var buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf), p = 0;
+  function str(s) { for (var i = 0; i < s.length; i++) v.setUint8(p++, s.charCodeAt(i)); }
+  function u32(x) { v.setUint32(p, x, true); p += 4; } function u16(x) { v.setUint16(p, x, true); p += 2; }
+  str("RIFF"); u32(36 + n * 2); str("WAVE"); str("fmt "); u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16); str("data"); u32(n * 2);
+  chunks.forEach(function (a) { for (var i = 0; i < a.length; i++) { v.setInt16(p, a[i], true); p += 2; } });
+  return buf;
+}
+if (typeof module !== "undefined") module.exports = { Radio: Radio, TalkCapture: TalkCapture, buildWav: buildWav, CHANNELS: CHANNELS, PREFIX: PREFIX };
+</script>
+<script>
+var RATE = 16000, radio, ac, stream, playT = 0, cap, chunks = [], entries = [], playing = null, logEl;
+var NAMES = { control: "Control", traffic: "Traffic", north: "North Patrol", south: "South Patrol", cyber: "Cyber Wing", emergency: "Emergency" };
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+function unlockAudio() {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === "suspended") ac.resume();
+  var b = ac.createBuffer(1, 1, 22050), s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(0);
+}
+function playPcm(a) {
+  if (!ac) return;
+  var b = ac.createBuffer(1, a.length, RATE), d = b.getChannelData(0);
+  for (var i = 0; i < a.length; i++) d[i] = a[i] / 32768;
+  var s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination);
+  var now = ac.currentTime; if (playT < now + 0.02 || playT > now + 0.35) playT = now + 0.08; s.start(playT); playT += b.duration;
+}
+function renderFloor() {
+  var f = radio && radio.floor;
+  floor.textContent = !f ? "Channel clear" : f.id === radio.id ? "You are on the floor" : f.name + " is talking";
+  ptt.textContent = cap && cap.phase === "live" ? "ON AIR" : cap && cap.phase === "wait" ? "WAIT" : cap && cap.phase === "tail" ? "CLOSING" : f && f.id !== radio.id ? "BUSY" : "HOLD TO TALK";
+  ptt.className = cap && (cap.phase === "live" || cap.phase === "tail") ? "on" : cap && cap.phase === "wait" ? "wait" : "";
+  var users = radio ? radio.list() : [];
+  online.textContent = users.length + " online" + (users.length ? ": " + users.map(function (u) { return u.name; }).join(", ") : "");
+}
+function b64(bytes) {
+  var s = "";
+  for (var i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function renderLog() {
+  logEl.innerHTML = entries.length ? entries.map(function (e, i) {
+    return "<li><div class=row><b>" + esc(e.name) + "</b><button data-i='" + i + "' type=button>Play</button></div><div class=muted>" + new Date(e.t0).toLocaleTimeString() + " · " + e.lang + "</div><p>" + esc(e.text || (e.pending ? "Transcribing…" : "")) + "</p>" + (e.fallback ? "<span class=badge>Sample line, not a recognition result</span>" : "") + "</li>";
+  }).join("") : "<li class=muted>No transmissions on this talkgroup yet.</li>";
+}
+channels.innerHTML = CHANNELS.map(function (id) { return "<button type=button data-ch='" + id + "'>" + NAMES[id] + "</button>"; }).join("");
+var qch = (new URLSearchParams(location.search).get("ch") || "traffic").replace(/[^\w-]/g, "");
+if (CHANNELS.indexOf(qch) < 0) qch = "traffic";
+function paintChannels() { [].forEach.call(channels.children, function (b) { b.className = b.dataset.ch === (radio ? radio.ch : qch) ? "primary" : ""; }); }
+paintChannels();
+function boot(ch) {
+  if (radio) radio.leave();
+  radio = new Radio(mqtt, { ch: ch, on: function (k, v, who) {
+    if (k === "state") renderFloor();
+    if (k === "net") net.textContent = "Relay: " + v;
+    if (k === "audio") playPcm(v);
+    if (k === "transcript") { entries.forEach(function (e) { if (e.id === v.id && e.pending) Object.assign(e, v, { pending: false }); }); renderLog(); }
+  } });
+  radio.browser = true;
+  if (callsign.value.trim()) radio.join(callsign.value.trim());
+  renderFloor(); paintChannels();
+}
+boot(qch);
+channels.onclick = function (ev) { var b = ev.target.closest("button"); if (!b) return; boot(b.dataset.ch); };
+join.onclick = function () { unlockAudio(); radio.join(callsign.value.trim() || "Unit"); armMic(); };
+function armMic() {
+  unlockAudio();
+  if (stream || !navigator.mediaDevices) return;
+  navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } }).then(function (s) {
+    stream = s; var src = ac.createMediaStreamSource(s), proc = ac.createScriptProcessor(2048, 1, 1), mute = ac.createGain(); mute.gain.value = 0;
+    src.connect(proc); proc.connect(mute); mute.connect(ac.destination);
+    proc.onaudioprocess = function (e) {
+      var i = e.inputBuffer.getChannelData(0), ratio = ac.sampleRate / RATE, n = Math.floor(i.length / ratio), o = new Int16Array(n);
+      for (var k = 0; k < n; k++) o[k] = Math.max(-1, Math.min(1, i[Math.floor(k * ratio)])) * 32767;
+      if (cap) cap.push(o, Date.now());
+    };
+  }).catch(function () { net.textContent = "Microphone blocked. You can still listen, or use Send test call."; });
+}
+function ensureCap() {
+  if (cap) return;
+  cap = new TalkCapture(function (frame) { if (radio.sendAudio(frame)) chunks.push(frame); }, { preroll: 7, tailMs: 250 });
+  cap.onFinish = function () { radio.release(); finishClip(); };
+}
+function down(e) { if (e) e.preventDefault(); unlockAudio(); ensureCap(); if (!radio.name) radio.join(callsign.value.trim() || "Unit"); if (!cap.down()) return; renderFloor(); radio.claim(function (ok) { cap.grant(ok, Date.now()); if (!ok) chunks = []; renderFloor(); }); }
+function up(e) { if (e) e.preventDefault(); if (!cap) return; cap.up(Date.now()); renderFloor(); setTimeout(function () { if (cap.phase === "tail") cap.finish(); }, cap.tailMs + 40); }
+ptt.addEventListener("pointerdown", function (e) { ptt.setPointerCapture(e.pointerId); down(e); });
+["pointerup", "pointercancel"].forEach(function (t) { ptt.addEventListener(t, up); });
+ptt.oncontextmenu = function (e) { e.preventDefault(); };
+addEventListener("keydown", function (e) { if (e.code === " " && !e.repeat && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") { e.preventDefault(); down(e); } });
+addEventListener("keyup", function (e) { if (e.code === " ") { e.preventDefault(); up(e); } });
+function finishClip() {
+  var mine = chunks.slice(); chunks = [];
+  var entry = { id: radio.id, name: radio.name, t0: Date.now(), lang: lang.value, text: "", pending: true, fallback: false, wav: buildWav(mine, RATE) };
+  entries.unshift(entry); renderLog();
+  var bytes = 0; mine.forEach(function (a) { bytes += a.byteLength; });
+  var bin = new Uint8Array(bytes), p = 0;
+  mine.forEach(function (a) { bin.set(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), p); p += a.byteLength; });
+  fetch("/api/transcribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ language: lang.value, pcm: b64(bin) }) })
+    .then(function (r) { return r.json(); })
+    .then(function (res) { entry.text = res.text || ""; entry.pending = false; entry.fallback = !!res.fallback; entry.provider = res.provider; renderLog(); radio.sendTranscript({ id: radio.id, name: radio.name, text: entry.text, fallback: entry.fallback, lang: lang.value }); })
+    .catch(function () { entry.text = "Transcript unavailable."; entry.pending = false; renderLog(); });
+}
+tone.onclick = function () {
+  unlockAudio(); ensureCap(); if (!radio.name) radio.join(callsign.value.trim() || "Unit");
+  if (!cap.down()) return;
+  radio.claim(function (ok) {
+    if (!ok) { cap.grant(false, Date.now()); return; }
+    var n = RATE, tone = new Int16Array(n);
+    for (var i = 0; i < n; i++) tone[i] = Math.round(Math.sin(2 * Math.PI * 440 * i / RATE) * 6000);
+    cap.pending = [tone]; cap.holding = false; cap.grant(true, Date.now()); cap.finish();
+  });
+};
+logEl = document.getElementById("log");
+logEl.onclick = function (ev) {
+  var b = ev.target.closest("button"); if (!b || b.dataset.i == null) return;
+  var e = entries[+b.dataset.i]; if (!e || !e.wav) return;
+  if (playing) { playing.pause(); playing = null; }
+  playing = new Audio(URL.createObjectURL(new Blob([e.wav], { type: "audio/wav" })));
+  playing.play();
+};
+</script>
+</body>
+</html>
