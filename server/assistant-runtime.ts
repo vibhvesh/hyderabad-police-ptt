@@ -100,8 +100,10 @@ export class AssistantRuntime {
     if (pcm && pcm.length) {
       const ts = this.now()
       this.relay.publish(root + 'floor', JSON.stringify({ t: 'claim', id: ASSISTANT_ID, name: ASSISTANT_NAME, ts }))
-      const frame = encodeAudio(ASSISTANT_ID, pcm)
-      if (frame) this.relay.publish(root + 'audio', frame)
+      for (const slice of pcmFrames(pcm)) {
+        const frame = encodeAudio(ASSISTANT_ID, slice)
+        if (frame) this.relay.publish(root + 'audio', frame)
+      }
       this.relay.publish(root + 'floor', JSON.stringify({ t: 'release', id: ASSISTANT_ID, name: ASSISTANT_NAME, ts: this.now() }))
     }
     this.relay.publish(
@@ -112,4 +114,11 @@ export class AssistantRuntime {
     this.citations.delete(job.id)
     if (queue.floorId === null || queue.floorId === ASSISTANT_ID) await this.pump(channel)
   }
+}
+
+function pcmFrames(pcm: Int16Array): Int16Array[] {
+  const size = 4_800
+  const frames: Int16Array[] = []
+  for (let index = 0; index < pcm.length; index += size) frames.push(pcm.subarray(index, Math.min(pcm.length, index + size)))
+  return frames
 }

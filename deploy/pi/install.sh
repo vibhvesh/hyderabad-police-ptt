@@ -14,6 +14,11 @@ if [ "$(uname -m)" != "aarch64" ] && [ "${ALLOW_NON_ARM:-}" != "1" ]; then
   exit 1
 fi
 
+if command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get update
+  sudo apt-get install -y espeak-ng
+fi
+
 if ! command -v node >/dev/null 2>&1; then
   echo "Install Node.js 22 or newer, then run this script again." >&2
   exit 1

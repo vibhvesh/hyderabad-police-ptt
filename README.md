@@ -33,8 +33,7 @@ The server listens on `0.0.0.0:8080` unless `HOST` and `PORT` are set. Copy `.en
 | `npm test` | 35 tests passed. Floor control, isolated in-memory audio, approval, forwards, expiry, SSRF, webhook signature, and the unconfigured recognizer. |
 | Public MQTT | HiveMQ, EMQX, and Shiftr accepted an isolated diagnostic topic from this machine. `test.mosquitto.org:8081` closed the socket, so it is not in the default list. |
 | Two browsers on the public demo channel | Not run. Tests use an in-memory channel. |
-| Whisper model download | Not run. The page says the model downloads on first use. |
-| espeak / whisper-cli | Not installed here. Health reports them unconfigured unless you set them. |
+| Local Whisper, OPUS translation, espeak-ng | Run with `LIVE_PROVIDERS=1 npx vitest run tests/live/providers.test.ts`. The default `npm test` skips that file and uses mocks only for the service tests. |
 | Raspberry Pi hardware | Not available. The installer and container file are in the repo and were not executed on a Pi. |
 | Docker image build | Not run. Docker is not installed in this workspace. The Dockerfile uses `node:22-bookworm-slim`, which publishes arm64 and amd64 images. |
 | Production deploy | Not done. |
@@ -49,13 +48,23 @@ Names and empty defaults are in `.env.example`.
 | `REVIEWER_TOKEN` | Promote or reject a draft, approve the same text again |
 | `INGEST_TOKEN` | Ask the approved file, upload a radio clip, request translation |
 | `WEBHOOK_SECRET` or `WEBHOOK_TOKEN` | Sign or authorize `POST /api/ingest/webhook` |
-| `ASR_PROVIDER` | `none` (default), `whisper-cli`, or `mock` |
-| `TRANSLATE_PROVIDER` | `none` (default), `libre`, or `mymemory` |
+| `ASR_PROVIDER` | `none` (default), `transformers` (local Whisper tiny), `whisper-cli`, or `mock` |
+| `TRANSLATE_PROVIDER` | `none` (default), `opus` (local English, Hindi, and Telugu), `libre`, or `mymemory` |
 | `TTS_PROVIDER` | `none` (default), `espeak`, or `mock` |
+| `MODEL_DIR` | Where Whisper and OPUS files are stored. Default `data/models` |
 | `TLS_CERT` and `TLS_KEY` | HTTPS. Required for phone microphones that are not on localhost |
 | `AUDIO_INPUT` and `AUDIO_OUTPUT` | Optional ALSA names for a Pi radio device |
 
 `GET /health` reports provider mode, whether tokens are configured, and that no mailbox is connected. It does not include token values or the reference file.
+
+Local speech, translation, and spoken replies:
+
+```sh
+sudo apt-get install -y espeak-ng
+ASR_PROVIDER=transformers TRANSLATE_PROVIDER=opus TTS_PROVIDER=espeak MODEL_DIR=./data/models npm run server
+```
+
+The first clip and the first translation download the models into `MODEL_DIR`. English and Hindi translation use `Xenova/opus-mt-en-hi` and `Xenova/opus-mt-hi-en`. Telugu speech recognition and the espeak-ng `te` voice work. Telugu translation is refused: the multilingual OPUS file splits its Telugu language token in this runtime, and the server does not return that broken string. `npm test` does not download the models. Its server cases use the mock recognizer or the unconfigured state. The live check is `LIVE_PROVIDERS=1 npx vitest run tests/live/providers.test.ts`.
 
 There is no built-in review interval. Leave review due and valid until empty, or set an exact time. A draft does not move those times.
 

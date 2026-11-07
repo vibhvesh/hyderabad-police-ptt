@@ -6,6 +6,7 @@ export type RelayTap = (topic: string, payload: Uint8Array) => void
 
 export class Relay {
   readonly sent: Array<{ topic: string; text: string }> = []
+  readonly audioFrames: Uint8Array[] = []
   private clients = new Set<WebSocket>()
   private retained = new Map<string, string>()
   tap: RelayTap = () => {}
@@ -27,6 +28,10 @@ export class Relay {
     }
     const text = typeof payload === 'string' ? payload : ''
     this.sent.push({ topic, text })
+    if (topic.endsWith('/audio') && typeof payload !== 'string') {
+      this.audioFrames.push(payload)
+      if (this.audioFrames.length > 8) this.audioFrames.shift()
+    }
     if (this.sent.length > 40) this.sent.shift()
     const bytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload
     this.tap(topic, bytes)

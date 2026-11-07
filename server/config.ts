@@ -14,11 +14,14 @@ export type Config = {
   kbMaxBytes: number
   audioMaxBytes: number
   fetchBearer: string | null
-  asrProvider: 'none' | 'mock' | 'whisper-cli'
+  asrProvider: 'none' | 'mock' | 'whisper-cli' | 'transformers'
   asrModel: string
   whisperCli: string
   allowMock: boolean
-  translateProvider: 'none' | 'libre' | 'mymemory'
+  translateProvider: 'none' | 'libre' | 'mymemory' | 'opus'
+  translateModelEnHi: string
+  translateModelHiEn: string
+  modelDir: string
   libreUrl: string | null
   libreKey: string | null
   ttsProvider: 'none' | 'mock' | 'espeak'
@@ -58,11 +61,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     kbMaxBytes: numberValue(env.KB_MAX_BYTES, 262_144),
     audioMaxBytes: numberValue(env.AUDIO_MAX_BYTES, 5_000_000),
     fetchBearer: blank(env.SOURCE_FETCH_BEARER),
-    asrProvider: asr === 'mock' || asr === 'whisper-cli' ? asr : 'none',
-    asrModel: env.ASR_MODEL?.trim() || 'tiny',
+    asrProvider: asr === 'mock' || asr === 'whisper-cli' || asr === 'transformers' ? asr : 'none',
+    asrModel: env.ASR_MODEL?.trim() || 'onnx-community/whisper-tiny',
     whisperCli: env.WHISPER_CLI?.trim() || 'whisper-cli',
     allowMock: env.ALLOW_MOCK_PROVIDERS === '1',
-    translateProvider: translate === 'libre' || translate === 'mymemory' ? translate : 'none',
+    translateProvider: translate === 'libre' || translate === 'mymemory' || translate === 'opus' ? translate : 'none',
+    translateModelEnHi: env.TRANSLATE_MODEL_EN_HI?.trim() || 'Xenova/opus-mt-en-hi',
+    translateModelHiEn: env.TRANSLATE_MODEL_HI_EN?.trim() || 'Xenova/opus-mt-hi-en',
+    modelDir: env.MODEL_DIR?.trim() || 'data/models',
     libreUrl: blank(env.LIBRETRANSLATE_URL),
     libreKey: blank(env.LIBRETRANSLATE_API_KEY),
     ttsProvider: tts === 'mock' || tts === 'espeak' ? tts : 'none',

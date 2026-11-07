@@ -59,8 +59,9 @@ export function ground(question: string, document: string): GroundHit {
     .sort((a, b) => b.score - a.score)
   const best = ranked[0]
   const second = ranked[1]
+  const distinct = new Set(query).size
   if (!best || best.score <= 0) return { status: 'not_found', message: 'No approved passage answers that question.' }
-  const strong = best.score >= 2 || (best.score === 1 && query.some((token) => token.length >= 6 && tokens(best.passage.text).includes(token)))
+  const strong = best.score >= 2 || best.score === distinct
   if (!strong) return { status: 'not_found', message: 'No approved passage answers that question.' }
   if (second && second.score === best.score) {
     return {

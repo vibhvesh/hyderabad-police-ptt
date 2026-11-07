@@ -221,6 +221,7 @@ describe('retrieval and questions', () => {
       expect(hit.message).not.toContain('145.500')
       expect(hit.message).not.toContain('146.700')
     }
+    expect(ground('what is the practice next action?', 'The practice desk code is 0000.').status).toBe('not_found')
     expect(isExplicitQuestion('The commander is on the way.')).toBe(false)
     expect(isExplicitQuestion('what is the help desk phone?')).toBe(true)
   })

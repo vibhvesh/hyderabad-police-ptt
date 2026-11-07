@@ -35,9 +35,27 @@ The JSON names the speech, translation, and speech-synthesis providers. `unconfi
 
 ## Pi 5 and Pi 3
 
-`PI_PROFILE=pi5` is the default note in the health output. For a Pi 3, set `PI_PROFILE=pi3` and `ASR_MODEL=tiny` if you use `ASR_PROVIDER=whisper-cli`. The tiny model is the low-resource choice. This repository does not claim a realtime speed on either board.
+`PI_PROFILE=pi5` is the default note in the health output. For a Pi 3 set `PI_PROFILE=pi3`. This repository does not claim a realtime speed on either board.
 
-Server speech recognition is optional. Phones can use the on-device Whisper model in the browser after it has been downloaded once. Translation stays unavailable until `TRANSLATE_PROVIDER` is set. A local LibreTranslate URL works offline after that service and its language data are installed. `mymemory` needs the internet and is not for sensitive text.
+Local providers, after `sudo apt-get install -y espeak-ng`:
+
+```sh
+ASR_PROVIDER=transformers
+TRANSLATE_PROVIDER=opus
+TTS_PROVIDER=espeak
+ASR_MODEL=onnx-community/whisper-tiny
+MODEL_DIR=/var/lib/sanket-ptt/models
+```
+
+Put those lines in `/etc/sanket-ptt.env`. The first request downloads the files into `MODEL_DIR`.
+
+| Piece | Download | Memory while running | Pi 5 (4 GB or more) | Pi 3 (1 GB) |
+| --- | --- | --- | --- | --- |
+| Whisper tiny, quantized | about 150 MB | about 1 GB | Use this | Use this, and do not load a translation model at the same time |
+| OPUS English-Hindi pair, quantized | about 200 MB for the files that are actually loaded | about 1 GB for one model | English and Hindi. Telugu translation stays off | Leave `TRANSLATE_PROVIDER=none` unless the board has swap and you accept long pauses |
+| espeak-ng | a few MB | negligible | English, Hindi, and Telugu voices | Same |
+
+Whisper base and the 600M NLLB model are not the defaults. They are larger than this Pi 3 guidance. Phones can still use the on-device Whisper model in the browser after that phone has downloaded it once. `mymemory` needs the internet and is not for sensitive text.
 
 `AUDIO_INPUT` and `AUDIO_OUTPUT` take ALSA names such as `plughw:1,0`. Leave them empty when the microphones and speakers are the phones. This build does not start a local capture loop unless those names are set, and capture was not exercised on hardware here.
 

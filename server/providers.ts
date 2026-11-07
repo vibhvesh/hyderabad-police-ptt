@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process'
+import { existsSync, readdirSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Config, ProviderMode } from './config.ts'
+import { localProviderDetail } from './local-runtime.ts'
 
 export type ProviderStatus = { id: string; mode: ProviderMode; detail: string }
 
@@ -29,8 +31,25 @@ export function createAsr(config: Config): AsrProvider {
       transcribe: (wav, language) => whisperCli(config, wav, language),
     }
   }
+  if (config.asrProvider === 'transformers') {
+    return {
+      status: () => ({
+        id: 'transformers',
+        mode: 'live',
+        detail: `${config.asrModel}. ${localProviderDetail('whisper', cacheHasFiles(config.modelDir))}`,
+      }),
+      async transcribe(wav, language) {
+        const runtime = await import('./local-runtime.ts')
+        return runtime.transcribeWithWhisper({ wav, language, model: config.asrModel, cacheDir: config.modelDir })
+      },
+    }
+  }
   return {
-    status: () => ({ id: 'none', mode: 'unconfigured', detail: 'Set ASR_PROVIDER=whisper-cli or use on-device Whisper in the browser.' }),
+    status: () => ({
+      id: 'none',
+      mode: 'unconfigured',
+      detail: 'Set ASR_PROVIDER=transformers for local Whisper, or whisper-cli, or use on-device Whisper in the browser.',
+    }),
     async transcribe() {
       return { error: 'asr_unconfigured', message: 'Server speech recognition is not configured.' }
     },
@@ -84,7 +103,14 @@ export function createTranslator(config: Config, fetchImpl: typeof fetch = fetch
       if (config.translateProvider === 'mymemory') {
         return { id: 'mymemory', mode: 'remote', detail: 'Public MyMemory API. Do not send sensitive text.' }
       }
-      return { id: 'none', mode: 'unconfigured', detail: 'Translation is not configured. Same-language text is returned unchanged.' }
+      if (config.translateProvider === 'opus') {
+        return {
+          id: 'opus',
+          mode: 'live',
+          detail: `${config.translateModelEnHi} and ${config.translateModelHiEn}. ${localProviderDetail('opus', cacheHasFiles(config.modelDir))}`,
+        }
+      }
+      return { id: 'none', mode: 'unconfigured', detail: 'Set TRANSLATE_PROVIDER=opus for local English, Hindi, and Telugu models. Same-language text is returned unchanged.' }
     },
     async translate(text, source, target) {
       if (source === target) return { text, provider: 'identity', mode: 'live' }
@@ -93,7 +119,17 @@ export function createTranslator(config: Config, fetchImpl: typeof fetch = fetch
         return libre(config, text, source, target, fetchImpl)
       }
       if (config.translateProvider === 'mymemory') return myMemory(text, source, target, fetchImpl)
-      return { error: 'translation_unconfigured', message: 'Server translation is not configured.' }
+      if (config.translateProvider === 'opus') {
+        const runtime = await import('./local-runtime.ts')
+        return runtime.translateWithOpus({
+          text,
+          source,
+          target,
+          models: { 'en-hi': config.translateModelEnHi, 'hi-en': config.translateModelHiEn },
+          cacheDir: config.modelDir,
+        })
+      }
+      return { error: 'translation_unconfigured', message: 'Server translation is not configured. Set TRANSLATE_PROVIDER=opus for the local models.' }
     },
   }
 }
@@ -174,7 +210,7 @@ async function espeak(bin: string, text: string): Promise<Int16Array | null> {
   const file = path.join(dir, 'out.wav')
   try {
     const code = await new Promise<number>((resolve, reject) => {
-      const child = spawn(bin, ['-s', '140', '-w', file, text.slice(0, 400)], { stdio: 'ignore' })
+      const child = spawn(bin, ['-v', voiceFor(text), '-s', '140', '-w', file, text.slice(0, 400)], { stdio: 'ignore' })
       child.on('error', reject)
       child.on('close', (status) => resolve(status ?? 1))
     })
@@ -186,6 +222,20 @@ async function espeak(bin: string, text: string): Promise<Int16Array | null> {
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+}
+
+function cacheHasFiles(dir: string): boolean {
+  try {
+    return existsSync(dir) && readdirSync(dir).length > 0
+  } catch {
+    return false
+  }
+}
+
+function voiceFor(text: string): string {
+  if (/[\u0C00-\u0C7F]/.test(text)) return 'te'
+  if (/[\u0900-\u097F]/.test(text)) return 'hi'
+  return 'en'
 }
 
 function wavToPcm(wav: Buffer): Int16Array | null {
