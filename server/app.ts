@@ -35,6 +35,7 @@ import { checkSourceUrl, pullSource, resolveHost, type FetchLike } from './sourc
 import { KbStore } from './store.ts'
 import { DemoGate, clearDemoCookie, codesMatch, demoCookie, readCookie } from './demo-access.ts'
 import { liveScribe, scribeConfiguredDetail, type ScribeGateway } from './scribe.ts'
+import { ScribeSessions, clearScribeCookie, clipDurationMs, publicScribeError, scribeCookie, SCRIBE_COOKIE, MAX_CLIP_MS } from './scribe-session.ts'
 
 export type AppOptions = {
   config?: Config
@@ -44,6 +45,7 @@ export type AppOptions = {
   lookupImpl?: (host: string) => Promise<string[]>
   log?: (line: string) => void
   scribe?: ScribeGateway
+  scribeFactory?: (apiKey: string) => ScribeGateway
 }
 
 const MIME: Record<string, string> = {
@@ -67,8 +69,15 @@ export function createApp(options: AppOptions = {}) {
   const demoRequests = new Set<http.IncomingMessage>()
   const asr = createAsr(config)
   const translator = createTranslator(config, options.fetchImpl as typeof fetch | undefined)
-  const scribe = config.elevenLabsApiKey ? (options.scribe ?? liveScribe(config.elevenLabsApiKey)) : null
+  const scribeSessions = new ScribeSessions(now)
   const scribeHits = new Map<string, { count: number; start: number }>()
+  let configuredKeyRejected = false
+
+  function gatewayFor(apiKey: string): ScribeGateway {
+    if (options.scribeFactory) return options.scribeFactory(apiKey)
+    if (options.scribe) return options.scribe
+    return liveScribe(apiKey)
+  }
   const tts = createTts(config)
   const relay = new Relay()
   const assistant = new AssistantRuntime(relay, store, tts, now)
@@ -110,7 +119,7 @@ export function createApp(options: AppOptions = {}) {
       res.setHeader('access-control-allow-origin', config.cors)
     }
     res.setHeader('access-control-allow-headers', 'authorization, content-type, x-sanket-signature, x-filename, x-actor, x-speaker-id, x-test-transcript')
-    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS')
+    res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS')
   }
 
   async function route(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -132,6 +141,9 @@ export function createApp(options: AppOptions = {}) {
     if (req.method === 'GET' && url.pathname === '/api/demo/session') return demoSession(req, res)
     if (req.method === 'POST' && url.pathname === '/api/demo/unlock') return demoUnlock(req, res)
     if (req.method === 'POST' && url.pathname === '/api/demo/lock') return demoLock(res)
+    if (req.method === 'GET' && url.pathname === '/api/speech/scribe-key') return scribeKeyStatus(req, res)
+    if (req.method === 'POST' && url.pathname === '/api/speech/scribe-key') return saveScribeKey(req, res)
+    if (req.method === 'DELETE' && url.pathname === '/api/speech/scribe-key') return forgetScribeKey(req, res)
     if (req.method === 'POST' && url.pathname === '/api/speech/scribe') return scribeClip(req, res)
     if (req.method === 'POST' && url.pathname === '/api/speech/scribe-token') return scribeToken(req, res)
     if (parts[0] === 'api' && parts[1] === 'channels' && parts[2]) return channelRoute(req, res, parts[2], parts.slice(3))
@@ -152,10 +164,10 @@ export function createApp(options: AppOptions = {}) {
         qa: { id: 'lexical', mode: 'live', detail: 'Quotes the commander-approved file only.' },
         scribe: {
           id: 'elevenlabs',
-          mode: config.elevenLabsApiKey ? 'configured' : 'unconfigured',
+          mode: scribeMode(),
           model: 'scribe_v2',
           realtimeModel: 'scribe_v2_realtime',
-          detail: scribeConfiguredDetail(Boolean(config.elevenLabsApiKey)),
+          detail: scribeConfiguredDetail(scribeMode()),
         },
         device: {
           asr: 'whisper-tiny',
@@ -196,15 +208,14 @@ export function createApp(options: AppOptions = {}) {
     send(res, 200, { access: 'none' })
   }
 
-  function demoAllowed(req: http.IncomingMessage): boolean {
-    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
-    const id = readCookie(req.headers.cookie, 'sanket_demo')
-    return gate.valid(id) && (!origin || config.demoOrigins.includes(origin))
+  function scribeMode(): 'configured' | 'rejected' | 'unconfigured' {
+    if (!config.elevenLabsApiKey) return 'unconfigured'
+    return configuredKeyRejected ? 'rejected' : 'configured'
   }
 
-  function cloudAllowed(req: http.IncomingMessage): boolean {
-    if (demoAllowed(req)) return true
-    return authorize(req.headers.authorization, config.ingestToken) === 'ok'
+  function originAllowed(req: http.IncomingMessage): boolean {
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
+    return !origin || config.demoOrigins.includes(origin)
   }
 
   function scribeLimited(ip: string): boolean {
@@ -218,62 +229,137 @@ export function createApp(options: AppOptions = {}) {
     return hit.count > 30
   }
 
-  async function scribeClip(req: http.IncomingMessage, res: http.ServerResponse) {
-    if (req.headers['x-cloud-consent'] !== 'yes') {
-      send(res, 400, { error: 'consent', message: 'Cloud transcription needs an explicit opt-in on this device.', translates: false })
+  function keyChoice(req: http.IncomingMessage): { source: 'server' | 'session'; key: string } | { source: 'none' } {
+    if (config.elevenLabsApiKey && !configuredKeyRejected) return { source: 'server', key: config.elevenLabsApiKey }
+    const sessionKey = scribeSessions.read(readCookie(req.headers.cookie, SCRIBE_COOKIE))
+    if (sessionKey) return { source: 'session', key: sessionKey }
+    return { source: 'none' }
+  }
+
+  function scribeKeyStatus(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (!originAllowed(req)) {
+      send(res, 403, { error: 'origin', message: 'This origin cannot use cloud transcription.' })
       return
     }
-    if (!cloudAllowed(req)) {
-      send(res, 401, { error: 'unauthorized', message: 'Unlock shared demo access, or present the ingest token, before using cloud transcription.', translates: false })
+    const choice = keyChoice(req)
+    send(res, 200, { source: choice.source, serverRejected: configuredKeyRejected })
+  }
+
+  async function saveScribeKey(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (!originAllowed(req)) {
+      send(res, 403, { error: 'origin', message: 'This origin cannot store a cloud key.' })
+      return
+    }
+    if ((req.url ?? '').includes('key=')) {
+      send(res, 400, { error: 'key', message: 'Send the key in the request body, not the address.' })
+      return
+    }
+    const body = await jsonBody(req, res, 4_096)
+    if (!body) return
+    const key = typeof body.key === 'string' ? body.key.trim() : ''
+    if (key.length < 8 || key.length > 200) {
+      send(res, 400, { error: 'key', message: 'That key was not saved.' })
+      return
+    }
+    const id = scribeSessions.save(readCookie(req.headers.cookie, SCRIBE_COOKIE), key)
+    res.setHeader('set-cookie', scribeCookie(id))
+    send(res, 200, { source: 'session' })
+  }
+
+  function forgetScribeKey(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (!originAllowed(req)) {
+      send(res, 403, { error: 'origin', message: 'This origin cannot clear a cloud key.' })
+      return
+    }
+    scribeSessions.clear(readCookie(req.headers.cookie, SCRIBE_COOKIE))
+    res.setHeader('set-cookie', clearScribeCookie())
+    send(res, 200, { source: keyChoice(req).source === 'server' ? 'server' : 'none' })
+  }
+
+  async function scribeClip(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (req.headers['x-cloud-consent'] !== 'yes') {
+      send(res, 400, { error: 'consent', message: 'Cloud transcription needs an explicit opt-in on this device.', translates: false, needsKey: false })
+      return
+    }
+    if (!originAllowed(req)) {
+      send(res, 403, { error: 'origin', message: 'This origin cannot use cloud transcription.', translates: false, needsKey: false })
       return
     }
     if (scribeLimited(clientIp(req))) {
-      send(res, 429, { error: 'rate_limited', message: 'Too many cloud transcription requests. Wait about 10 minutes.', translates: false })
+      send(res, 429, { error: 'rate_limited', message: 'Too many cloud transcription requests. Wait about 10 minutes.', translates: false, needsKey: false })
       return
     }
-    if (!scribe) {
-      send(res, 503, { error: 'scribe_unconfigured', message: scribeConfiguredDetail(false), translates: false })
+    const choice = keyChoice(req)
+    if (choice.source === 'none') {
+      send(res, 409, {
+        error: 'scribe_unconfigured',
+        message: 'No key is saved for this session. Paste one for this visit, or skip and stay on this device.',
+        translates: false,
+        needsKey: true,
+      })
       return
     }
-    const wav = await readBody(req, config.audioMaxBytes)
+    const wav = await readBody(req, Math.min(config.audioMaxBytes, 2_000_000))
     if (wav === 'too_large') {
-      send(res, 413, { error: 'too_large', message: 'The audio is over the size limit.', translates: false })
+      send(res, 413, { error: 'too_large', message: 'The audio is over the size limit.', translates: false, needsKey: false })
       return
     }
-    if (wav.length < 1000) {
-      send(res, 400, { error: 'audio', message: 'The clip is too short to transcribe.', translates: false })
+    const duration = clipDurationMs(wav)
+    if (duration == null || duration < 200) {
+      send(res, 400, { error: 'audio', message: 'The clip is too short to transcribe.', translates: false, needsKey: false })
+      return
+    }
+    if (duration > MAX_CLIP_MS) {
+      send(res, 413, { error: 'too_long', message: 'Cloud transcription accepts up to 60 seconds.', translates: false, needsKey: false })
       return
     }
     const language = headerString(req, 'x-language')
     const code = language === 'en' || language === 'hi' || language === 'te' ? language : 'te'
     try {
-      const text = await scribe.convert(wav, code)
-      send(res, 200, { text, provider: 'elevenlabs-scribe', model: 'scribe_v2', mode: 'live', translates: false })
+      const text = await gatewayFor(choice.key).convert(wav, code)
+      send(res, 200, { text, provider: 'elevenlabs-scribe', model: 'scribe_v2', mode: 'live', translates: false, needsKey: false })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Scribe failed'
-      send(res, 502, { error: 'scribe_failed', message: message.slice(0, 180), translates: false })
+      const failure = publicScribeError(error, choice.key)
+      if (failure.auth && choice.source === 'server') configuredKeyRejected = true
+      if (failure.auth && choice.source === 'session') scribeSessions.clear(readCookie(req.headers.cookie, SCRIBE_COOKIE))
+      send(res, failure.auth ? 401 : 502, {
+        error: failure.auth ? 'key_rejected' : 'scribe_failed',
+        message: failure.auth && choice.source === 'server'
+          ? 'The saved server key was rejected and will not be used again.'
+          : failure.message,
+        translates: false,
+        needsKey: failure.auth,
+      })
     }
   }
 
   async function scribeToken(req: http.IncomingMessage, res: http.ServerResponse) {
     if (req.headers['x-cloud-consent'] !== 'yes') {
-      send(res, 400, { error: 'consent', message: 'A realtime token needs an explicit cloud opt-in.', translates: false })
+      send(res, 400, { error: 'consent', message: 'A realtime token needs an explicit cloud opt-in.', translates: false, needsKey: false })
       return
     }
-    if (!cloudAllowed(req)) {
-      send(res, 401, { error: 'unauthorized', message: 'Unlock shared demo access, or present the ingest token, before requesting a realtime token.', translates: false })
+    if (!originAllowed(req)) {
+      send(res, 403, { error: 'origin', message: 'This origin cannot use cloud transcription.', translates: false, needsKey: false })
       return
     }
-    if (!scribe) {
-      send(res, 503, { error: 'scribe_unconfigured', message: scribeConfiguredDetail(false), translates: false })
+    const choice = keyChoice(req)
+    if (choice.source === 'none') {
+      send(res, 409, { error: 'scribe_unconfigured', message: 'No key is saved for this session.', translates: false, needsKey: true })
       return
     }
     try {
-      const token = await scribe.realtimeToken()
-      send(res, 200, { token, modelId: 'scribe_v2_realtime', expires: '15m', translates: false })
+      const token = await gatewayFor(choice.key).realtimeToken()
+      send(res, 200, { token, modelId: 'scribe_v2_realtime', expires: '15m', translates: false, needsKey: false })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'The realtime token was not issued.'
-      send(res, 502, { error: 'scribe_failed', message: message.slice(0, 180), translates: false })
+      const failure = publicScribeError(error, choice.key)
+      if (failure.auth && choice.source === 'server') configuredKeyRejected = true
+      if (failure.auth && choice.source === 'session') scribeSessions.clear(readCookie(req.headers.cookie, SCRIBE_COOKIE))
+      send(res, failure.auth ? 401 : 502, {
+        error: failure.auth ? 'key_rejected' : 'scribe_failed',
+        message: failure.message,
+        translates: false,
+        needsKey: failure.auth,
+      })
     }
   }
 

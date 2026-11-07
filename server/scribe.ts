@@ -30,8 +30,12 @@ export function liveScribe(apiKey: string): ScribeGateway {
   }
 }
 
-export function scribeConfiguredDetail(configured: boolean): string {
-  return configured
-    ? 'Scribe v2 can transcribe a clip after this device opts in. It does not translate. Realtime uses a short-lived scribe_v2_realtime token.'
-    : 'Set ELEVENLABS_API_KEY on the server to enable optional Scribe transcription. The browser never receives that key.'
+export function scribeConfiguredDetail(mode: 'configured' | 'rejected' | 'unconfigured'): string {
+  if (mode === 'configured') {
+    return 'A server key is configured for optional Scribe transcription. It does not translate. A rejected key is not reused.'
+  }
+  if (mode === 'rejected') {
+    return 'The configured server key was rejected and is not being used. A browser can paste a different key for its own session.'
+  }
+  return 'No server key is saved. After opting in, a browser can paste a key for this session only. It is not written to disk.'
 }

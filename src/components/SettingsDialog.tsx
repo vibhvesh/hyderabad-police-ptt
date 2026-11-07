@@ -49,8 +49,8 @@ export function SettingsDialog({ name, cloudFallback, onName, onCloudFallback }:
             />
             <span>
               If on-device Whisper fails, send that finished clip to ElevenLabs Scribe v2 through this server.
-              This can spend paid credits. Scribe only transcribes. Translation still runs on this device.
-              The API key stays on the server. Shared demo access has to be unlocked before a cloud clip is accepted.
+              Cloud processing can incur provider charges. Scribe only transcribes. Translation still runs on this device.
+              The app does not ask for a key until this box is checked.
             </span>
           </label>
           <div className="flex flex-col gap-1.5">

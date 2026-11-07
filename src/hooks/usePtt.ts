@@ -24,18 +24,17 @@ import { readableTranscript } from '../lib/format.ts'
 import {
   clearStoredSpeechKey,
   loadBackend,
-  loadCloudFallback,
   loadLang,
   loadName,
   loadTarget,
   loadTopic,
   loadTransport,
-  saveCloudFallback,
   saveLang,
   saveName,
   saveTarget,
 } from '../lib/storage.ts'
-import { transcribeScribe } from '../lib/scribe-client.ts'
+import { CloudKeyNeeded, clearScribeKey, saveScribeKey, scribeKeyStatus, transcribeScribe } from '../lib/scribe-client.ts'
+import type { CloudKeySource } from '../lib/scribe-prompt.ts'
 import { ensureModel, transcribeLocal, watchModel, type ModelStatus } from '../lib/transcribe.ts'
 import { ensureTranslation, translateLocal, watchTranslation, type TranslateStatus } from '../lib/translate-local.ts'
 import { LANGUAGES, type ChatMessage, type LangId } from '../lib/types.ts'
@@ -79,7 +78,10 @@ export function usePtt() {
   const [name, setNameState] = useState(loadName)
   const [lang, setLangState] = useState<LangId>(loadLang)
   const [target, setTargetState] = useState<LangId>(loadTarget)
-  const [cloudFallback, setCloudFallbackState] = useState(loadCloudFallback)
+  const [cloudFallback, setCloudFallbackState] = useState(false)
+  const [keySource, setKeySource] = useState<CloudKeySource>('none')
+  const [needsKey, setNeedsKey] = useState(false)
+  const [keyNote, setKeyNote] = useState('')
   const [model, setModel] = useState<ModelStatus>({ state: 'idle' })
   const [translationModel, setTranslationModel] = useState<TranslateStatus>({ state: 'idle' })
   const [runtimeNote] = useState(() => speechRuntime().note)
@@ -148,8 +150,15 @@ export function usePtt() {
             return { text, via: 'device' as const }
           } catch (error) {
             if (!cloudRef.current || !job.wav) throw error
-            const text = readableTranscript(await transcribeScribe(job.wav, option.eleven))
-            return { text, via: 'scribe' as const }
+            try {
+              const text = readableTranscript(await transcribeScribe(job.wav, option.eleven))
+              return { text, via: 'scribe' as const }
+            } catch (cloudError) {
+              if (cloudError instanceof CloudKeyNeeded) setNeedsKey(true)
+              const localMessage = error instanceof Error ? error.message : 'On-device recognition failed'
+              const cloudMessage = cloudError instanceof Error ? cloudError.message : 'Cloud transcription failed'
+              throw new Error(`${localMessage} ${cloudMessage}`)
+            }
           }
         },
         translate: (text, source, targetLang) => translateLocal(text, source, targetLang),
@@ -587,9 +596,45 @@ export function usePtt() {
     saveTarget(value)
   }
 
-  function setCloudFallback(value: boolean) {
+  async function setCloudFallback(value: boolean) {
     setCloudFallbackState(value)
-    saveCloudFallback(value)
+    if (!value) {
+      setNeedsKey(false)
+      setKeyNote('')
+      return
+    }
+    try {
+      const status = await scribeKeyStatus()
+      setKeySource(status.serverRejected && status.source === 'server' ? 'none' : status.source)
+      const ask = status.source === 'none' || status.serverRejected
+      setNeedsKey(ask && status.source !== 'session')
+      setKeyNote(status.serverRejected ? 'The saved server key was rejected and will not be used again.' : '')
+    } catch (error) {
+      setCloudFallbackState(false)
+      setNeedsKey(false)
+      setKeyNote(error instanceof Error ? error.message : 'Cloud status could not be checked. Staying on this device.')
+    }
+  }
+
+  async function saveCloudKey(value: string) {
+    await saveScribeKey(value)
+    setKeySource('session')
+    setNeedsKey(false)
+    setKeyNote('Saved for this session only. Clear it here, or it expires when the session ends.')
+  }
+
+  async function clearCloudKey() {
+    await clearScribeKey()
+    const status = await scribeKeyStatus().catch(() => ({ source: 'none' as const, serverRejected: false }))
+    setKeySource(status.source === 'server' ? 'server' : 'none')
+    setNeedsKey(status.source !== 'server')
+    setKeyNote(status.source === 'server' ? '' : 'Session key cleared.')
+  }
+
+  function skipCloud() {
+    setCloudFallbackState(false)
+    setNeedsKey(false)
+    setKeyNote('Staying on this device.')
   }
 
   function clearMessages() {
@@ -609,6 +654,12 @@ export function usePtt() {
     setTarget,
     cloudFallback,
     setCloudFallback,
+    keySource,
+    needsKey,
+    keyNote,
+    saveCloudKey,
+    clearCloudKey,
+    skipCloud,
     model,
     translationModel,
     runtimeNote,

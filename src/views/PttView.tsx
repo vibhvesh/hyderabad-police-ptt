@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Input } from '@/components/ui/input'
 import { MessageList } from '@/components/MessageList'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { Button } from '@/components/ui/button'
@@ -10,6 +11,31 @@ import { PHASE_CLASS, PHASE_LABEL } from '@/lib/phase'
 import { translationPlan } from '@/lib/translation-plan'
 import { LANGUAGES, type LangId } from '@/lib/types'
 import { cn } from '@/lib/utils'
+
+function SessionKeyForm({ note, onSave, onSkip }: { note: string; onSave: (value: string) => Promise<void>; onSkip: () => void }) {
+  const [value, setValue] = useState('')
+  const [error, setError] = useState('')
+  return (
+    <form
+      className="grid w-full gap-2 rounded-xl bg-white px-3 py-3 text-sm"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void onSave(value).then(() => setValue('')).catch((reason: unknown) => {
+          setError(reason instanceof Error ? reason.message : 'That key was not saved.')
+        })
+      }}
+    >
+      <p>No key is saved for this session. Paste one to use cloud transcription for this visit, or skip and stay on this device. The key is sent over HTTPS and is not stored in this browser. Cloud processing can incur charges.</p>
+      <Input type="password" autoComplete="off" value={value} maxLength={200} aria-label="Session cloud key" onChange={(event) => setValue(event.target.value)} />
+      {note ? <p>{note}</p> : null}
+      {error ? <p className="text-red-700">{error}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit">Use for this session</Button>
+        <Button type="button" variant="outline" onClick={onSkip}>Skip and stay on this device</Button>
+      </div>
+    </form>
+  )
+}
 
 function detailFor(phase: Phase, talker: string | null, netDetail: string) {
   if (phase === 'offline') return netDetail
@@ -79,7 +105,18 @@ export function PttView() {
           <p>{ptt.name}</p>
           <p className="text-xs text-slate-500">{ptt.loc ? formatLoc(ptt.loc) : ptt.geoNote}</p>
         </div>
-        <SettingsDialog name={ptt.name} cloudFallback={ptt.cloudFallback} onName={ptt.setName} onCloudFallback={ptt.setCloudFallback} />
+        <SettingsDialog name={ptt.name} cloudFallback={ptt.cloudFallback} onName={ptt.setName} onCloudFallback={(value) => void ptt.setCloudFallback(value)} />
+        {ptt.cloudFallback && ptt.needsKey ? <SessionKeyForm note={ptt.keyNote} onSave={(value) => ptt.saveCloudKey(value)} onSkip={ptt.skipCloud} /> : null}
+        {ptt.cloudFallback && ptt.keySource === 'session' && !ptt.needsKey ? (
+          <div className="w-full rounded-xl bg-white px-3 py-3 text-sm">
+            <p>A key is stored for this session only. It is not kept in this browser after you clear it or the session ends.</p>
+            <Button type="button" variant="outline" className="mt-2" onClick={() => void ptt.clearCloudKey()}>Clear session key</Button>
+          </div>
+        ) : null}
+        {ptt.cloudFallback && ptt.keySource === 'server' ? (
+          <p className="text-xs text-slate-600">Using the key configured on the server. You can turn cloud transcription off and stay on this device.</p>
+        ) : null}
+        {ptt.keyNote && !ptt.needsKey ? <p className="text-xs text-slate-600">{ptt.keyNote}</p> : null}
       </section>
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">

@@ -62,18 +62,11 @@ export function saveTarget(lang: LangId) {
   write(TARGET, lang)
 }
 
-export function loadCloudFallback(): boolean {
-  return read(CLOUD) === 'yes'
-}
-
-export function saveCloudFallback(enabled: boolean) {
-  write(CLOUD, enabled ? 'yes' : 'no')
-}
-
-/** Older builds stored an ElevenLabs key in the browser. Drop it so it cannot be sent. */
+/** Older builds stored an ElevenLabs key and a cloud opt-in in the browser. Drop both. */
 export function clearStoredSpeechKey() {
   try {
     localStorage.removeItem(KEY)
+    localStorage.removeItem(CLOUD)
   } catch {
     /* private mode */
   }
