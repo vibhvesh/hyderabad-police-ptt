@@ -33,6 +33,7 @@ import { createAsr, createTranslator, createTts } from './providers.ts'
 import { Relay } from './relay.ts'
 import { checkSourceUrl, pullSource, resolveHost, type FetchLike } from './sources.ts'
 import { KbStore } from './store.ts'
+import { DemoGate, clearDemoCookie, codesMatch, demoCookie, readCookie } from './demo-access.ts'
 
 export type AppOptions = {
   config?: Config
@@ -60,6 +61,8 @@ export function createApp(options: AppOptions = {}) {
   const store = options.store ?? new KbStore(config.dataDir)
   const now = options.now ?? Date.now
   const log = options.log ?? (() => {})
+  const gate = new DemoGate(now)
+  const demoRequests = new Set<http.IncomingMessage>()
   const asr = createAsr(config)
   const translator = createTranslator(config, options.fetchImpl as typeof fetch | undefined)
   const tts = createTts(config)
@@ -93,10 +96,21 @@ export function createApp(options: AppOptions = {}) {
     }
   }
 
-  async function route(req: http.IncomingMessage, res: http.ServerResponse) {
-    res.setHeader('access-control-allow-origin', config.cors)
+  function applyCors(req: http.IncomingMessage, res: http.ServerResponse) {
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
+    if (origin && config.demoOrigins.includes(origin)) {
+      res.setHeader('access-control-allow-origin', origin)
+      res.setHeader('access-control-allow-credentials', 'true')
+      res.setHeader('vary', 'Origin')
+    } else if (!origin || urlIsPublic(req.url)) {
+      res.setHeader('access-control-allow-origin', config.cors)
+    }
     res.setHeader('access-control-allow-headers', 'authorization, content-type, x-sanket-signature, x-filename, x-actor, x-speaker-id, x-test-transcript')
     res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS')
+  }
+
+  async function route(req: http.IncomingMessage, res: http.ServerResponse) {
+    applyCors(req, res)
     if (req.method === 'OPTIONS') {
       res.statusCode = 204
       res.end()
@@ -111,6 +125,9 @@ export function createApp(options: AppOptions = {}) {
     if (req.method === 'POST' && url.pathname === '/api/transcribe') return transcribe(req, res)
     if (req.method === 'POST' && url.pathname === '/api/translate') return translate(req, res)
     if (req.method === 'POST' && url.pathname === '/api/ingest/webhook') return webhook(req, res)
+    if (req.method === 'GET' && url.pathname === '/api/demo/session') return demoSession(req, res)
+    if (req.method === 'POST' && url.pathname === '/api/demo/unlock') return demoUnlock(req, res)
+    if (req.method === 'POST' && url.pathname === '/api/demo/lock') return demoLock(res)
     if (parts[0] === 'api' && parts[1] === 'channels' && parts[2]) return channelRoute(req, res, parts[2], parts.slice(3))
     if (req.method === 'GET' && config.staticDir) return serveStatic(res, url.pathname)
     send(res, 404, { error: 'not_found', message: 'No such route.' })
@@ -133,6 +150,7 @@ export function createApp(options: AppOptions = {}) {
         reviewer: config.reviewerToken ? 'required' : 'unconfigured',
         ingest: config.ingestToken ? 'required' : 'unconfigured',
         webhook: config.webhookSecret || config.webhookToken ? 'required' : 'unconfigured',
+        demo: config.demoAccessCode ? 'configured' : 'unconfigured',
       },
       reviewDefaults: {
         reviewDue: null,
@@ -148,6 +166,40 @@ export function createApp(options: AppOptions = {}) {
       piProfile: config.piProfile,
       tls: Boolean(config.tlsCert && config.tlsKey),
     }
+  }
+
+  function demoSession(req: http.IncomingMessage, res: http.ServerResponse) {
+    const id = readCookie(req.headers.cookie, 'sanket_demo')
+    send(res, 200, { access: gate.valid(id) ? 'shared-demo' : 'none' })
+  }
+
+  function demoLock(res: http.ServerResponse) {
+    res.setHeader('set-cookie', clearDemoCookie())
+    send(res, 200, { access: 'none' })
+  }
+
+  async function demoUnlock(req: http.IncomingMessage, res: http.ServerResponse) {
+    const ip = clientIp(req)
+    if (gate.blocked(ip)) {
+      send(res, 429, { error: 'rate_limited', message: 'Too many tries. Wait about 10 minutes and try again.' })
+      return
+    }
+    const body = await jsonBody(req, res, 2_000)
+    if (!body) return
+    const code = typeof body.code === 'string' ? body.code.trim() : ''
+    const verdict = codesMatch(code, config.demoAccessCode)
+    if (verdict === 'unconfigured') {
+      send(res, 503, { error: 'auth_unconfigured', message: 'Demo access is not configured on this server.' })
+      return
+    }
+    if (verdict !== 'ok') {
+      gate.fail(ip)
+      send(res, 401, { error: 'unauthorized', message: 'That demo code was not accepted.' })
+      return
+    }
+    gate.clear(ip)
+    res.setHeader('set-cookie', demoCookie(gate.open()))
+    send(res, 200, { access: 'shared-demo' })
   }
 
   async function channelRoute(req: http.IncomingMessage, res: http.ServerResponse, channel: string, rest: string[]) {
@@ -187,6 +239,9 @@ export function createApp(options: AppOptions = {}) {
     fn: () => Promise<void>,
   ) {
     const header = req.headers.authorization
+    const demo = gate.valid(readCookie(req.headers.cookie, 'sanket_demo'))
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
+    const demoAllowed = demo && role !== 'ingest' && (!origin || config.demoOrigins.includes(origin))
     const result =
       role === 'any'
         ? authorize(header, config.adminToken) === 'ok' ||
@@ -203,6 +258,11 @@ export function createApp(options: AppOptions = {}) {
               ? 'unconfigured'
               : 'unauthorized'
           : authorize(header, role === 'admin' ? config.adminToken : role === 'reviewer' ? config.reviewerToken : config.ingestToken)
+    if (result !== 'ok' && demoAllowed) {
+      demoRequests.add(req)
+      await fn()
+      return
+    }
     const denied = authStatus(result)
     if (denied) {
       send(res, denied.status, { error: denied.error, message: denied.message })
@@ -230,6 +290,7 @@ export function createApp(options: AppOptions = {}) {
   async function postProposal(req: http.IncomingMessage, res: http.ServerResponse, channel: string) {
     const body = await jsonBody(req, res, config.kbMaxBytes)
     if (!body) return
+    if (demoRequests.has(req)) body.actor = 'shared demo'
     const value = await update(channel, (state) => {
       const result = ingestJson(state, body, new Date(now()).toISOString(), channel)
       return { save: result.save, value: result }
@@ -244,7 +305,7 @@ export function createApp(options: AppOptions = {}) {
       return
     }
     const filename = String(req.headers['x-filename'] ?? 'reference.txt')
-    const actor = String(req.headers['x-actor'] ?? 'administrator')
+    const actor = demoRequests.has(req) ? 'shared demo' : String(req.headers['x-actor'] ?? 'administrator')
     const value = await update(channel, (state) => {
       const result = ingestFile(state, filename, raw.toString('utf8'), new Date(now()).toISOString(), actor)
       return { save: result.save, value: result }
@@ -637,6 +698,17 @@ export function createApp(options: AppOptions = {}) {
       })
     },
   }
+}
+
+function urlIsPublic(url: string | undefined): boolean {
+  const path = (url ?? '/').split('?')[0] ?? '/'
+  return path === '/' || path === '/health' || path === '/api/health' || path.startsWith('/assets/') || path === '/favicon.svg'
+}
+
+function clientIp(req: http.IncomingMessage): string {
+  const forwarded = req.headers['x-forwarded-for']
+  const raw = typeof forwarded === 'string' ? forwarded.split(',')[0] : req.socket.remoteAddress
+  return (raw ?? 'unknown').trim().slice(0, 80)
 }
 
 function send(res: http.ServerResponse, status: number, body: unknown) {

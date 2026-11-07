@@ -31,6 +31,8 @@ export type Config = {
   piProfile: string | null
   tlsCert: string | null
   tlsKey: string | null
+  demoAccessCode: string | null
+  demoOrigins: string[]
 }
 
 function blank(value: string | undefined): string | null {
@@ -78,5 +80,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     piProfile: blank(env.PI_PROFILE),
     tlsCert: blank(env.TLS_CERT),
     tlsKey: blank(env.TLS_KEY),
+    demoAccessCode: blank(env.DEMO_ACCESS_CODE),
+    demoOrigins: (env.DEMO_ORIGINS?.trim() || 'https://sanket-ptt.onrender.com,https://vibhvesh.github.io')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
   }
 }

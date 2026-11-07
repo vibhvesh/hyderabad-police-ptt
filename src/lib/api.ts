@@ -8,9 +8,16 @@ export function backendBase(): string {
   return loadBackend().replace(/\/$/, '')
 }
 
+export async function demoFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers)
+  if (init.body && typeof init.body === 'string' && !headers.has('content-type')) headers.set('content-type', 'application/json')
+  return fetch(`${backendBase()}${path}`, { ...init, headers, credentials: 'include' })
+}
+
 export async function apiFetch(path: string, token: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers)
-  if (token) headers.set('authorization', `Bearer ${token}`)
+  const trimmed = token.trim()
+  if (trimmed) headers.set('authorization', `Bearer ${trimmed}`)
   if (init.body && typeof init.body === 'string' && !headers.has('content-type')) headers.set('content-type', 'application/json')
   return fetch(`${backendBase()}${path}`, { ...init, headers })
 }

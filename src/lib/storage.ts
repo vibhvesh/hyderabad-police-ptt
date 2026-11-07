@@ -103,11 +103,12 @@ export function loadSession(key: string): string {
   }
 }
 
-export function saveSession(key: string, value: string) {
+export function saveSession(key: string, value: string): boolean {
   try {
     if (value) sessionStorage.setItem(key, value)
     else sessionStorage.removeItem(key)
+    return true
   } catch {
-    /* private mode */
+    return false
   }
 }
