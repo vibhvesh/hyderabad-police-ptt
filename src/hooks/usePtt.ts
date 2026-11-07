@@ -8,12 +8,24 @@ import {
   TAIL_MS,
 } from '../lib/constants.ts'
 import { readableTranscript, type GeoFix } from '../lib/format.ts'
-import { Radio, type NetState, type RadioView, type Speaker } from '../lib/radio.ts'
+import { ASSISTANT_ID } from '../lib/assistant.ts'
+import { isExplicitQuestion } from '../lib/questions.ts'
+import { micErrorMessage } from '../lib/media-errors.ts'
+import { MqttWire } from '../lib/mqtt-transport.ts'
+import { DEFAULT_TOPIC_ROOT, safeTopicRoot } from '../lib/net.ts'
+import { phaseOf, type Phase } from '../lib/phase.ts'
+import { Radio, type RadioView, type Speaker } from '../lib/radio.ts'
+import { RelayWire } from '../lib/relay-transport.ts'
+import type { NetSnapshot, Wire } from '../lib/transport.ts'
+import { askChannel } from '../lib/api.ts'
 import {
   loadElevenKey,
   loadEngine,
   loadLang,
+  loadBackend,
   loadName,
+  loadTopic,
+  loadTransport,
   saveElevenKey,
   saveEngine,
   saveLang,
@@ -22,7 +34,23 @@ import {
 import { ensureModel, transcribeEleven, transcribeLocal, watchModel, type ModelStatus } from '../lib/transcribe.ts'
 import { LANGUAGES, type ChatMessage, type EngineId, type LangId } from '../lib/types.ts'
 
-export type Phase = 'offline' | 'idle' | 'claiming' | 'talking' | 'receiving' | 'busy'
+export type { Phase }
+
+async function chooseWire(): Promise<Wire> {
+  const mode = loadTransport()
+  let backend = loadBackend().replace(/\/$/, '')
+  if (!backend && mode !== 'mqtt') {
+    try {
+      const response = await fetch('/health', { cache: 'no-store' })
+      const body = (await response.json()) as { service?: string }
+      if (body.service === 'sanket-ptt') backend = window.location.origin
+    } catch {
+      backend = ''
+    }
+  }
+  if (mode === 'mqtt' || !backend) return new MqttWire()
+  return new RelayWire(backend)
+}
 
 type OpenClip = {
   id: string
@@ -35,7 +63,7 @@ type OpenClip = {
   mine: boolean
 }
 
-type Job = { key: string; pcm: Int16Array; wav: ArrayBuffer; lang: LangId }
+type Job = { key: string; pcm: Int16Array; wav: ArrayBuffer; lang: LangId; mine: boolean }
 
 const EMPTY_RADIO: RadioView = { users: [], floor: null, me: '', online: false }
 
@@ -50,7 +78,15 @@ export function usePtt() {
   const [apiKey, setApiKeyState] = useState(loadElevenKey)
   const [model, setModel] = useState<ModelStatus>({ state: 'idle' })
   const [radioState, setRadioState] = useState<RadioView>(EMPTY_RADIO)
-  const [net, setNet] = useState<NetState>({ state: 'connecting', detail: 'Connecting to relay' })
+  const [net, setNet] = useState<NetSnapshot>({
+    state: 'connecting',
+    detail: 'Connecting',
+    attempt: 0,
+    broker: null,
+    error: null,
+    nextRetryMs: null,
+    transport: 'mqtt',
+  })
   const [holding, setHolding] = useState(false)
   const [granted, setGranted] = useState(false)
   const [denied, setDenied] = useState(false)
@@ -70,6 +106,7 @@ export function usePtt() {
   const radioRef = useRef<Radio | null>(null)
   const floorRef = useRef<RadioView['floor']>(null)
   const meRef = useRef('')
+  const topicRef = useRef(DEFAULT_TOPIC_ROOT)
   const holdingRef = useRef(false)
   const grantedRef = useRef(false)
   const liveRef = useRef(false)
@@ -112,11 +149,11 @@ export function usePtt() {
         } else {
           text = await transcribeLocal(toWhisperAudio(job.pcm), option.whisper)
         }
-        patchMessage(job.key, {
-          pending: false,
-          transcript: readableTranscript(text),
-          error: null,
-        })
+        const transcript = readableTranscript(text)
+        patchMessage(job.key, { pending: false, transcript, error: null })
+        if (job.mine && isExplicitQuestion(transcript) && transcript !== 'No speech detected') {
+          void askChannel(transcript, meRef.current, topicRef.current)
+        }
       } catch (error) {
         patchMessage(job.key, {
           pending: false,
@@ -128,12 +165,12 @@ export function usePtt() {
     pumpingRef.current = false
   }
 
-  function enqueue(key: string, pcm: Int16Array, wav: ArrayBuffer) {
+  function enqueue(key: string, pcm: Int16Array, wav: ArrayBuffer, mine: boolean) {
     if (rms(pcm) < 0.01) {
       patchMessage(key, { pending: false, transcript: 'No speech detected', error: null })
       return
     }
-    jobsRef.current.push({ key, pcm, wav, lang: langRef.current })
+    jobsRef.current.push({ key, pcm, wav, lang: langRef.current, mine })
     void pump()
   }
 
@@ -162,7 +199,7 @@ export function usePtt() {
       }
       return next
     })
-    enqueue(message.key, pcm, wav)
+    enqueue(message.key, pcm, wav, clip.mine)
   }
 
   function finishTx() {
@@ -285,6 +322,10 @@ export function usePtt() {
   async function ensureMic() {
     unlock()
     if (streamRef.current) return true
+    if (!window.isSecureContext) {
+      setMicError(micErrorMessage(null, false))
+      return false
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setMicError('This browser has no microphone API.')
       return false
@@ -310,7 +351,7 @@ export function usePtt() {
       setMicError(null)
       return true
     } catch (error) {
-      setMicError(error instanceof Error ? error.message : 'Microphone unavailable. You can still listen.')
+      setMicError(micErrorMessage(error, window.isSecureContext))
       return false
     }
   }
@@ -371,53 +412,77 @@ export function usePtt() {
   }, [])
 
   useEffect(() => {
-    const radio = new Radio({
-      state: (view) => {
-        floorRef.current = view.floor
-        meRef.current = view.me
-        setRadioState(view)
-      },
-      net: setNet,
-      boundary: () => closeRx(),
-      lost: () => {
-        liveRef.current = false
-        grantedRef.current = false
-        holdingRef.current = false
-        setHolding(false)
-        setGranted(false)
-        finishTx()
-        ringRef.current.clear()
-      },
-      audio: (pcm, from: Speaker) => {
-        lastRxRef.current = Date.now()
-        playPcm(pcm)
-        const now = Date.now()
-        const open = rxRef.current
-        if (open && (open.id !== from.id || now - open.last > CLIP_GAP_MS)) closeRx()
-        let clip = rxRef.current
-        if (!clip || clip.id !== from.id) {
-          clip = {
-            id: from.id,
-            name: from.name,
-            loc: from.loc,
-            t0: now,
-            last: now,
-            chunks: [],
-            samples: 0,
-            mine: false,
+    let radio: Radio | null = null
+    let cancelled = false
+    void (async () => {
+      const wire = await chooseWire()
+      if (cancelled) {
+        wire.stop()
+        return
+      }
+      const root = safeTopicRoot(loadTopic()) ?? DEFAULT_TOPIC_ROOT
+      topicRef.current = root
+      radio = new Radio(wire, root, {
+        state: (view) => {
+          floorRef.current = view.floor
+          meRef.current = view.me
+          setRadioState(view)
+        },
+        net: setNet,
+        boundary: () => closeRx(),
+        lost: () => {
+          liveRef.current = false
+          grantedRef.current = false
+          holdingRef.current = false
+          setHolding(false)
+          setGranted(false)
+          finishTx()
+          ringRef.current.clear()
+        },
+        notice: (notice) => {
+          const wav = buildWav([new Int16Array(Math.round(SAMPLE_RATE / 10))], SAMPLE_RATE)
+          const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
+          setMessages((prev) => [
+            {
+              key: notice.answerId,
+              name: notice.name,
+              mine: false,
+              t0: Date.now(),
+              dur: 0.1,
+              url,
+              loc: null,
+              transcript: notice.text,
+              error: null,
+              pending: false,
+              role: 'assistant' as const,
+              citation: notice.citation,
+            },
+            ...prev,
+          ].slice(0, 40))
+        },
+        audio: (pcm, from: Speaker) => {
+          lastRxRef.current = Date.now()
+          playPcm(pcm)
+          if (from.id === ASSISTANT_ID) return
+          const now = Date.now()
+          const open = rxRef.current
+          if (open && (open.id !== from.id || now - open.last > CLIP_GAP_MS)) closeRx()
+          let clip = rxRef.current
+          if (!clip || clip.id !== from.id) {
+            clip = { id: from.id, name: from.name, loc: from.loc, t0: now, last: now, chunks: [], samples: 0, mine: false }
+            rxRef.current = clip
           }
-          rxRef.current = clip
-        }
-        if (from.loc) clip.loc = from.loc
-        clip.name = from.name
-        clip.chunks.push(pcm)
-        clip.samples += pcm.length
-        clip.last = now
-      },
-    })
-    radioRef.current = radio
-    radio.setLoc(locRef.current)
-    radio.start(nameRef.current)
+          if (from.loc) clip.loc = from.loc
+          clip.name = from.name
+          clip.chunks.push(pcm)
+          clip.samples += pcm.length
+          clip.last = now
+        },
+      })
+      radioRef.current = radio
+      radio.setLoc(locRef.current)
+      radio.start(nameRef.current)
+    })()
     startGeo()
     const gapTimer = window.setInterval(() => {
       const clip = rxRef.current
@@ -446,7 +511,7 @@ export function usePtt() {
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
-    const leave = () => radio.stop()
+    const leave = () => radio?.stop()
     window.addEventListener('pagehide', leave)
     return () => {
       window.clearInterval(gapTimer)
@@ -461,7 +526,8 @@ export function usePtt() {
       }
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
-      radio.stop()
+      cancelled = true
+      radio?.stop()
     }
     // The radio session lives for the whole page. Handlers read refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -473,12 +539,15 @@ export function usePtt() {
 
   const floor = radioState.floor
   const me = radioState.me
-  let phase: Phase = 'idle'
-  if (net.state !== 'online') phase = 'offline'
-  else if (granted) phase = 'talking'
-  else if (holding && (denied || (floor && floor.id !== me))) phase = 'busy'
-  else if (floor && floor.id !== me) phase = Date.now() - lastRxRef.current < 700 ? 'receiving' : 'busy'
-  else if (holding) phase = 'claiming'
+  const phase = phaseOf({
+    online: net.state === 'online',
+    holding,
+    granted,
+    denied,
+    floorId: floor?.id ?? null,
+    me,
+    recentRx: Date.now() - lastRxRef.current < 700,
+  })
 
   // `tick` forces the receiving/busy colour to follow incoming audio.
   void tick

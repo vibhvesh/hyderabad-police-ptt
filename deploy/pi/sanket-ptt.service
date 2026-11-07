@@ -1,0 +1,16 @@
+[Unit]
+Description=Sanket PTT reference and relay service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sanket
+WorkingDirectory=/opt/sanket-ptt
+EnvironmentFile=-/etc/sanket-ptt.env
+ExecStart=/usr/bin/node --experimental-strip-types /opt/sanket-ptt/server/main.ts
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

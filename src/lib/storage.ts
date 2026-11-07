@@ -4,6 +4,9 @@ const NAME = 'hp-unit-name'
 const LANG = 'hp-lang'
 const ENGINE = 'hp-engine'
 const KEY = 'hp-eleven-key'
+const BACKEND = 'sanket-backend-url'
+const TRANSPORT = 'sanket-transport'
+const TOPIC = 'sanket-topic'
 
 function read(key: string): string | null {
   try {
@@ -62,4 +65,49 @@ export function loadElevenKey(): string {
 
 export function saveElevenKey(key: string) {
   write(KEY, key.trim())
+}
+
+export type TransportMode = 'auto' | 'mqtt' | 'server'
+
+export function loadBackend(): string {
+  return read(BACKEND) ?? import.meta.env.VITE_BACKEND_URL ?? ''
+}
+
+export function saveBackend(value: string) {
+  write(BACKEND, value.trim())
+}
+
+export function loadTransport(): TransportMode {
+  const value = read(TRANSPORT)
+  if (value === 'mqtt' || value === 'server' || value === 'auto') return value
+  return 'auto'
+}
+
+export function saveTransport(value: TransportMode) {
+  write(TRANSPORT, value)
+}
+
+export function loadTopic(): string {
+  return read(TOPIC) ?? ''
+}
+
+export function saveTopic(value: string) {
+  write(TOPIC, value.trim())
+}
+
+export function loadSession(key: string): string {
+  try {
+    return sessionStorage.getItem(key) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export function saveSession(key: string, value: string) {
+  try {
+    if (value) sessionStorage.setItem(key, value)
+    else sessionStorage.removeItem(key)
+  } catch {
+    /* private mode */
+  }
 }
