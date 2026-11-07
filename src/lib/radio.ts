@@ -1,78 +1,73 @@
-import mqtt, { type MqttClient } from 'mqtt'
 import {
-  BROKERS,
   CLAIM_GRACE_MS,
   FLOOR_TIMEOUT_MS,
   PRESENCE_BEAT_MS,
   PRESENCE_EXPIRE_MS,
-  TOPIC_ROOT,
 } from './constants.ts'
 import { reduceFloor, type Floor, type FloorMsg } from './floor.ts'
-import { brokerLabel, cleanLoc, uid, type GeoFix } from './format.ts'
+import { cleanLoc, type GeoFix } from './format.ts'
+import { decodeAudio, decodeNotice, encodeAudio, type ChannelNotice } from './packets.ts'
+import type { NetSnapshot, Wire } from './transport.ts'
 
-export type Station = {
-  id: string
-  name: string
-  seen: number
-}
-
-export type RadioView = {
-  users: Station[]
-  floor: Floor | null
-  me: string
-  online: boolean
-}
-
-export type Speaker = {
-  id: string
-  name: string
-  loc: GeoFix | null
-}
-
-export type NetState = {
-  state: 'connecting' | 'online' | 'offline'
-  detail: string
-}
+export type Station = { id: string; name: string; seen: number }
+export type RadioView = { users: Station[]; floor: Floor | null; me: string; online: boolean }
+export type Speaker = { id: string; name: string; loc: GeoFix | null }
 
 type Handlers = {
   state: (view: RadioView) => void
   audio: (pcm: Int16Array, from: Speaker) => void
   boundary: () => void
-  net: (net: NetState) => void
+  net: (net: NetSnapshot) => void
   lost: () => void
+  notice: (notice: ChannelNotice) => void
 }
 
-function asBytes(payload: Uint8Array | ArrayBuffer | string): Uint8Array {
-  if (typeof payload === 'string') return new TextEncoder().encode(payload)
-  if (payload instanceof Uint8Array) return new Uint8Array(payload)
-  return new Uint8Array(payload)
+function bytes(payload: Uint8Array): Uint8Array {
+  return payload
 }
 
 export class Radio {
-  readonly id = uid()
+  readonly id: string
   name = ''
   loc: GeoFix | null = null
   online = false
   private floor: Floor | null = null
   private talking = false
   private users = new Map<string, Station>()
-  private client: MqttClient | null = null
-  private gen = 0
-  private brokerIndex = 0
-  private stopped = false
+  private timer: number | null = null
   private lastBeat = 0
-  private timer = 0
-  private retry = 0
-  private readonly handlers: Handlers
+  private claimTimer: number | null = null
+  private recentAudio: string[] = []
+  private stopped = false
 
-  constructor(handlers: Handlers) {
+  private wire: Wire
+  private root: string
+  private handlers: Handlers
+
+  constructor(wire: Wire, root: string, handlers: Handlers, id?: string) {
+    this.wire = wire
+    this.root = root
     this.handlers = handlers
+    this.id = id ?? randomId()
+    this.wire.onState((state) => {
+      const was = this.online
+      this.online = state.state === 'online'
+      this.handlers.net(state)
+      if (was && !this.online && this.talking) {
+        this.talking = false
+        this.handlers.lost()
+      }
+      this.emit()
+    })
+    this.wire.onMessage((topic, payload) => this.onMessage(topic, payload))
   }
 
   start(name: string) {
     this.name = name.slice(0, 40)
-    this.timer = window.setInterval(() => this.tick(), 1000)
-    this.connect()
+    this.stopped = false
+    this.wire.subscribe([`${this.root}presence/+`, `${this.root}floor`, `${this.root}audio`, `${this.root}notice`])
+    this.wire.start()
+    this.timer = setInterval(() => this.tick(), 1000) as unknown as number
   }
 
   rename(name: string) {
@@ -85,7 +80,7 @@ export class Radio {
   }
 
   claim(done: (ok: boolean) => void) {
-    if (!this.client?.connected || !this.name) {
+    if (!this.online || !this.name) {
       done(false)
       return
     }
@@ -95,132 +90,58 @@ export class Radio {
     }
     this.talking = true
     const ts = Date.now()
-    this.setFloor({
-      id: this.id,
-      name: this.name,
-      ts,
-      seen: ts,
-      got: ts,
-      loc: this.loc,
-    })
+    this.setFloor({ id: this.id, name: this.name, ts, seen: ts, got: ts, loc: this.loc })
     this.publishFloor('claim', ts)
-    window.setTimeout(() => {
+    if (this.claimTimer != null) clearTimeout(this.claimTimer)
+    this.claimTimer = setTimeout(() => {
       const ok = this.talking && this.floor?.id === this.id
       if (!ok) this.talking = false
       done(ok)
-    }, CLAIM_GRACE_MS)
+    }, CLAIM_GRACE_MS) as unknown as number
   }
 
   release() {
+    if (this.claimTimer != null) clearTimeout(this.claimTimer)
     this.talking = false
-    if (this.floor?.id === this.id) {
-      this.setFloor(null)
-      if (this.client?.connected) {
-        this.client.publish(
-          this.topic('floor'),
-          JSON.stringify({ t: 'release', id: this.id, name: this.name, ts: Date.now() }),
-        )
-      }
-    }
+    if (this.floor?.id !== this.id) return
+    this.setFloor(null)
+    if (this.online) this.wire.publish(this.topic('floor'), JSON.stringify({ t: 'release', id: this.id, name: this.name, ts: Date.now() }))
   }
 
   sendAudio(pcm: Int16Array): boolean {
-    if (!this.talking || this.floor?.id !== this.id || !this.client?.connected) return false
-    const idBytes = new TextEncoder().encode(this.id)
-    const body = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)
-    const out = new Uint8Array(1 + idBytes.length + body.length)
-    out[0] = idBytes.length
-    out.set(idBytes, 1)
-    out.set(body, 1 + idBytes.length)
-    this.client.publish(this.topic('audio'), out as never)
-    return true
+    if (!this.talking || this.floor?.id !== this.id) return false
+    const frame = encodeAudio(this.id, pcm)
+    if (!frame) return false
+    return this.wire.publish(this.topic('audio'), frame)
   }
 
   stop() {
     if (this.stopped) return
     this.stopped = true
     this.release()
-    if (this.client?.connected) {
-      this.client.publish(this.topic(`presence/${this.id}`), '', { retain: true })
-    }
-    window.clearInterval(this.timer)
-    window.clearTimeout(this.retry)
-    this.gen++
-    this.client?.end(false)
+    if (this.online) this.wire.publish(this.topic(`presence/${this.id}`), '', true)
+    if (this.timer) clearInterval(this.timer)
+    if (this.claimTimer) clearTimeout(this.claimTimer)
+    this.wire.stop()
     this.online = false
   }
 
   private topic(suffix: string) {
-    return TOPIC_ROOT + suffix
-  }
-
-  private connect() {
-    if (this.stopped) return
-    const gen = ++this.gen
-    const url = BROKERS[this.brokerIndex % BROKERS.length] ?? BROKERS[0]
-    this.handlers.net({ state: 'connecting', detail: `Connecting to ${brokerLabel(url)}` })
-    let opened = false
-    const client = mqtt.connect(url, {
-      clientId: `hp_${this.id}_${Date.now() % 1_000_000}`,
-      clean: true,
-      keepalive: 20,
-      reconnectPeriod: 0,
-      connectTimeout: 8_000,
-      protocolVersion: 4,
-      will: {
-        topic: this.topic(`presence/${this.id}`),
-        payload: '',
-        retain: true,
-        qos: 0,
-      },
-    })
-    this.client = client
-    let handled = false
-    client.on('connect', () => {
-      if (this.stopped || this.gen !== gen) return
-      opened = true
-      this.online = true
-      client.subscribe([this.topic('presence/+'), this.topic('floor'), this.topic('audio')], () => {
-        if (this.name) this.beat()
-      })
-      this.handlers.net({ state: 'online', detail: `Connected · ${brokerLabel(url)}` })
-      this.emit()
-    })
-    client.on('message', (topic, payload) => {
-      if (this.stopped || this.gen !== gen) return
-      this.onMessage(topic, payload)
-    })
-    client.on('error', () => {})
-    client.on('close', () => {
-      if (handled || this.stopped || this.gen !== gen) return
-      handled = true
-      this.online = false
-      this.handlers.net({ state: 'offline', detail: 'Reconnecting' })
-      if (!opened) this.brokerIndex++
-      this.retry = window.setTimeout(() => {
-        if (this.stopped || this.gen !== gen) return
-        client.end(true)
-        this.connect()
-      }, opened ? 1_200 : 400)
-    })
+    return this.root + suffix
   }
 
   private beat() {
-    if (!this.name || !this.client?.connected) return
+    if (!this.name || !this.online) return
     this.lastBeat = Date.now()
-    const body: { id: string; name: string; ts: number; loc?: GeoFix } = {
-      id: this.id,
-      name: this.name,
-      ts: this.lastBeat,
-    }
+    const body: { id: string; name: string; ts: number; loc?: GeoFix } = { id: this.id, name: this.name, ts: this.lastBeat }
     if (this.loc) body.loc = this.loc
-    this.client.publish(this.topic(`presence/${this.id}`), JSON.stringify(body), { retain: true })
+    this.wire.publish(this.topic(`presence/${this.id}`), JSON.stringify(body), true)
   }
 
   private publishFloor(kind: 'claim' | 'hb', ts: number) {
-    if (!this.client?.connected) return
+    if (!this.online) return
     const body: FloorMsg = { t: kind, id: this.id, name: this.name, ts, loc: this.loc }
-    this.client.publish(this.topic('floor'), JSON.stringify(body))
+    this.wire.publish(this.topic('floor'), JSON.stringify(body))
   }
 
   private tick() {
@@ -255,12 +176,12 @@ export class Radio {
   }
 
   private onMessage(topic: string, payload: Uint8Array) {
-    if (!topic.startsWith(TOPIC_ROOT)) return
-    const rest = topic.slice(TOPIC_ROOT.length)
+    if (!topic.startsWith(this.root)) return
+    const rest = topic.slice(this.root.length)
     const now = Date.now()
+    const raw = bytes(payload)
     if (rest.startsWith('presence/')) {
       const id = rest.slice('presence/'.length)
-      const raw = asBytes(payload)
       if (raw.length === 0) {
         this.users.delete(id)
         if (this.floor?.id === id) this.setFloor(null)
@@ -271,8 +192,7 @@ export class Radio {
         const msg = JSON.parse(new TextDecoder().decode(raw)) as { name?: unknown; ts?: unknown }
         const ts = Number(msg.ts)
         if (!Number.isFinite(ts) || now - ts >= PRESENCE_EXPIRE_MS * 4) return
-        const name = String(msg.name ?? 'Unit').slice(0, 40)
-        this.users.set(id, { id, name, seen: now })
+        this.users.set(id, { id, name: String(msg.name ?? 'Unit').slice(0, 40), seen: now })
         this.emit()
       } catch {
         /* ignore malformed presence */
@@ -281,7 +201,7 @@ export class Radio {
     }
     if (rest === 'floor') {
       try {
-        const msg = JSON.parse(new TextDecoder().decode(asBytes(payload))) as FloorMsg
+        const msg = JSON.parse(new TextDecoder().decode(raw)) as FloorMsg
         if (msg.t !== 'claim' && msg.t !== 'hb' && msg.t !== 'release') return
         if (typeof msg.id !== 'string' || typeof msg.name !== 'string') return
         const nextMsg: FloorMsg = {
@@ -292,30 +212,32 @@ export class Radio {
         }
         if ('loc' in msg) nextMsg.loc = cleanLoc(msg.loc)
         const next = reduceFloor(this.floor, nextMsg, now)
-        if (next && this.users.has(next.id)) {
-          const user = this.users.get(next.id)
-          if (user) user.seen = now
-        }
         this.setFloor(next)
       } catch {
         /* ignore malformed floor */
       }
       return
     }
-    if (rest === 'audio') {
-      const raw = asBytes(payload)
-      if (raw.length < 2) return
-      const n = raw[0] ?? 0
-      if (n < 1 || raw.length < 1 + n + 2) return
-      const id = new TextDecoder().decode(raw.subarray(1, 1 + n))
-      const floor = this.floor
-      if (!floor || id === this.id || floor.id !== id) return
-      floor.seen = now
-      const body = raw.subarray(1 + n)
-      const even = body.length - (body.length % 2)
-      const pcm = new Int16Array(even / 2)
-      new Uint8Array(pcm.buffer).set(body.subarray(0, even))
-      this.handlers.audio(pcm, { id, name: floor.name, loc: floor.loc })
+    if (rest === 'notice') {
+      const notice = decodeNotice(raw)
+      if (notice) this.handlers.notice(notice)
+      return
     }
+    if (rest !== 'audio') return
+    const decoded = decodeAudio(raw)
+    if (!decoded) return
+    const floor = this.floor
+    if (!floor || decoded.id === this.id || floor.id !== decoded.id) return
+    const hash = `${decoded.id}:${raw.length}:${raw[1]}:${raw[raw.length - 1]}`
+    if (this.recentAudio.includes(hash)) return
+    this.recentAudio = [...this.recentAudio, hash].slice(-32)
+    floor.seen = now
+    this.handlers.audio(decoded.pcm, { id: decoded.id, name: floor.name, loc: floor.loc })
   }
+}
+
+function randomId(): string {
+  const bytes = new Uint8Array(4)
+  crypto.getRandomValues(bytes)
+  return [...bytes].map((item) => item.toString(16).padStart(2, '0')).join('')
 }

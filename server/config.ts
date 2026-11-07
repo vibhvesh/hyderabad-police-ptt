@@ -1,0 +1,76 @@
+export type ProviderMode = 'unconfigured' | 'live' | 'mock' | 'remote'
+
+export type Config = {
+  host: string
+  port: number
+  adminToken: string | null
+  reviewerToken: string | null
+  ingestToken: string | null
+  webhookSecret: string | null
+  webhookToken: string | null
+  dataDir: string
+  staticDir: string | null
+  cors: string
+  kbMaxBytes: number
+  audioMaxBytes: number
+  fetchBearer: string | null
+  asrProvider: 'none' | 'mock' | 'whisper-cli'
+  asrModel: string
+  whisperCli: string
+  allowMock: boolean
+  translateProvider: 'none' | 'libre' | 'mymemory'
+  libreUrl: string | null
+  libreKey: string | null
+  ttsProvider: 'none' | 'mock' | 'espeak'
+  espeakBin: string
+  audioInput: string | null
+  audioOutput: string | null
+  piProfile: string | null
+  tlsCert: string | null
+  tlsKey: string | null
+}
+
+function blank(value: string | undefined): string | null {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : null
+}
+
+function numberValue(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const asr = env.ASR_PROVIDER?.trim() || 'none'
+  const translate = env.TRANSLATE_PROVIDER?.trim() || 'none'
+  const tts = env.TTS_PROVIDER?.trim() || 'none'
+  return {
+    host: env.HOST?.trim() || '0.0.0.0',
+    port: numberValue(env.PORT, 8080),
+    adminToken: blank(env.ADMIN_TOKEN),
+    reviewerToken: blank(env.REVIEWER_TOKEN),
+    ingestToken: blank(env.INGEST_TOKEN),
+    webhookSecret: blank(env.WEBHOOK_SECRET),
+    webhookToken: blank(env.WEBHOOK_TOKEN),
+    dataDir: env.DATA_DIR?.trim() || 'data',
+    staticDir: blank(env.STATIC_DIR),
+    cors: env.CORS_ORIGINS?.trim() || '*',
+    kbMaxBytes: numberValue(env.KB_MAX_BYTES, 262_144),
+    audioMaxBytes: numberValue(env.AUDIO_MAX_BYTES, 5_000_000),
+    fetchBearer: blank(env.SOURCE_FETCH_BEARER),
+    asrProvider: asr === 'mock' || asr === 'whisper-cli' ? asr : 'none',
+    asrModel: env.ASR_MODEL?.trim() || 'tiny',
+    whisperCli: env.WHISPER_CLI?.trim() || 'whisper-cli',
+    allowMock: env.ALLOW_MOCK_PROVIDERS === '1',
+    translateProvider: translate === 'libre' || translate === 'mymemory' ? translate : 'none',
+    libreUrl: blank(env.LIBRETRANSLATE_URL),
+    libreKey: blank(env.LIBRETRANSLATE_API_KEY),
+    ttsProvider: tts === 'mock' || tts === 'espeak' ? tts : 'none',
+    espeakBin: env.ESPEAK_BIN?.trim() || 'espeak-ng',
+    audioInput: blank(env.AUDIO_INPUT),
+    audioOutput: blank(env.AUDIO_OUTPUT),
+    piProfile: blank(env.PI_PROFILE),
+    tlsCert: blank(env.TLS_CERT),
+    tlsKey: blank(env.TLS_KEY),
+  }
+}

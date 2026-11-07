@@ -1,41 +1,77 @@
-# Hyderabad Police PTT
+# Sanket PTT
 
-A one-channel push-to-talk demo. Open the page and you are on channel **HYD-1**. Hold the button to talk. Only one person can talk at a time.
+A browser push-to-talk demo and a separate transcription page. One channel is open by default: **SANKET-1**. Hold the button to talk. Only one person speaks at a time.
 
 **Demo only, not for professional use.**
 
-## Public demo
+Sanket Transcribe is the second page. It records from the microphone or an audio file, shows the original text, and shows a translation only when a translator is actually available.
 
-https://vibhvesh.github.io/hyderabad-police-ptt/
+The Reference page is where an administrator files updates and a designated commander approves them. Ordinary radio audio never edits that file.
 
-The Android app loads that address.
+## Run the browser app
 
-## Run it locally
-
-```bash
+```sh
 npm install
 npm test
 npm run dev
 ```
 
-The dev server listens on http://127.0.0.1:8731. `npm run build` then `npm run preview` serves the production build on the same port.
+Open http://127.0.0.1:8731/hyderabad-police-ptt/ . The dev server proxies `/api`, `/health`, and `/ws` to a local server on port 8080 when that server is running. Without it, Talk still uses the public MQTT relays.
 
-Microphone, speaker, and location prompts come from the browser. There is no PIN and no account. A unit name is created on this device and can be changed in settings.
-
-## How a call works
-
-Voice is 12 kHz 16-bit PCM over a public MQTT WebSocket broker (HiveMQ, then EMQX, Mosquitto, and Shiftr as fallbacks). The page reconnects on its own. A short pre-roll and a short tail are kept so the first and last syllables are not clipped. The first tap unlocks audio for iOS.
-
-Each transmission is listed with playback, a transcript, and the sender’s latitude, longitude, and accuracy. There is no map.
-
-Transcription language defaults to Telugu. English and Hindi are on the main screen. On-device Whisper (`onnx-community/whisper-base`, quantised) downloads once and is cached in the browser. Settings can switch a device to ElevenLabs Scribe; the API key stays in `localStorage` and audio is sent to ElevenLabs only when that option is selected.
-
-## Android wrapper
-
-`releases/HyderabadPolicePTT.apk` is a thin WebView shell. It requests microphone and location, then opens the public demo. Install it with “install unknown apps” enabled. Rebuild after the public address changes:
-
-```bash
-android/build.sh in.hyderabad.police.ptt "Hyderabad Police PTT" "https://your-host/" releases/HyderabadPolicePTT.apk
+```sh
+npm run server
 ```
 
-The script expects Android SDK platform 34 and build-tools 34.0.0 (`ANDROID_HOME`, default `$HOME/android-sdk`). The demo signing key is created at `android/debug.keystore` (password `hydptt123`) and is not committed.
+The server listens on `0.0.0.0:8080` unless `HOST` and `PORT` are set. Copy `.env.example` to `.env` and set the tokens before using Reference, transcription upload, or webhooks. Empty tokens make those actions return "not configured".
+
+`npm run build` writes the GitHub Pages build under `/hyderabad-police-ptt/`. `npm run build:root` writes a site for the Pi or the container at `/`.
+
+## What was checked in this workspace
+
+| Check | Result |
+| --- | --- |
+| `npm test` | 35 tests passed. Floor control, isolated in-memory audio, approval, forwards, expiry, SSRF, webhook signature, and the unconfigured recognizer. |
+| Public MQTT | HiveMQ, EMQX, and Shiftr accepted an isolated diagnostic topic from this machine. `test.mosquitto.org:8081` closed the socket, so it is not in the default list. |
+| Two browsers on the public demo channel | Not run. Tests use an in-memory channel. |
+| Whisper model download | Not run. The page says the model downloads on first use. |
+| espeak / whisper-cli | Not installed here. Health reports them unconfigured unless you set them. |
+| Raspberry Pi hardware | Not available. The installer and container file are in the repo and were not executed on a Pi. |
+| Docker image build | Not run. Docker is not installed in this workspace. The Dockerfile uses `node:22-bookworm-slim`, which publishes arm64 and amd64 images. |
+| Production deploy | Not done. |
+
+## Server environment
+
+Names and empty defaults are in `.env.example`.
+
+| Name | Purpose |
+| --- | --- |
+| `ADMIN_TOKEN` | File drafts, name the commander, set dates, add a fetch source |
+| `REVIEWER_TOKEN` | Promote or reject a draft, approve the same text again |
+| `INGEST_TOKEN` | Ask the approved file, upload a radio clip, request translation |
+| `WEBHOOK_SECRET` or `WEBHOOK_TOKEN` | Sign or authorize `POST /api/ingest/webhook` |
+| `ASR_PROVIDER` | `none` (default), `whisper-cli`, or `mock` |
+| `TRANSLATE_PROVIDER` | `none` (default), `libre`, or `mymemory` |
+| `TTS_PROVIDER` | `none` (default), `espeak`, or `mock` |
+| `TLS_CERT` and `TLS_KEY` | HTTPS. Required for phone microphones that are not on localhost |
+| `AUDIO_INPUT` and `AUDIO_OUTPUT` | Optional ALSA names for a Pi radio device |
+
+`GET /health` reports provider mode, whether tokens are configured, and that no mailbox is connected. It does not include token values or the reference file.
+
+There is no built-in review interval. Leave review due and valid until empty, or set an exact time. A draft does not move those times.
+
+## Raspberry Pi
+
+See [deploy/pi/QUICKSTART.md](deploy/pi/QUICKSTART.md). Phones on the LAN need HTTPS. The installer can write a local certificate. Trust it on the phone or the microphone stays blocked.
+
+## Container
+
+```sh
+docker build -t sanket-ptt .
+docker compose up
+```
+
+That build was not run here. Compose reads `.env` and does not start a translator container.
+
+## Legacy channel
+
+Settings still default to `sanket-ptt/v1/sanket-1/`. The previous public demo topic `hyd-police-ptt/demo1/hyd-1/` can be typed as the topic root. Audio framing is unchanged, so an older page can still hear a newer one on the same topic. The Android file in `releases/` is an old WebView shell and is not required.
