@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  base: '/hyderabad-police-ptt/',
+  base: process.env.VITE_BASE ?? '/hyderabad-police-ptt/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
