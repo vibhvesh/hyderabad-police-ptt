@@ -34,6 +34,7 @@ import { Relay } from './relay.ts'
 import { checkSourceUrl, pullSource, resolveHost, type FetchLike } from './sources.ts'
 import { KbStore } from './store.ts'
 import { DemoGate, clearDemoCookie, codesMatch, demoCookie, readCookie } from './demo-access.ts'
+import { liveScribe, scribeConfiguredDetail, type ScribeGateway } from './scribe.ts'
 
 export type AppOptions = {
   config?: Config
@@ -42,6 +43,7 @@ export type AppOptions = {
   fetchImpl?: FetchLike
   lookupImpl?: (host: string) => Promise<string[]>
   log?: (line: string) => void
+  scribe?: ScribeGateway
 }
 
 const MIME: Record<string, string> = {
@@ -65,6 +67,8 @@ export function createApp(options: AppOptions = {}) {
   const demoRequests = new Set<http.IncomingMessage>()
   const asr = createAsr(config)
   const translator = createTranslator(config, options.fetchImpl as typeof fetch | undefined)
+  const scribe = config.elevenLabsApiKey ? (options.scribe ?? liveScribe(config.elevenLabsApiKey)) : null
+  const scribeHits = new Map<string, { count: number; start: number }>()
   const tts = createTts(config)
   const relay = new Relay()
   const assistant = new AssistantRuntime(relay, store, tts, now)
@@ -128,6 +132,8 @@ export function createApp(options: AppOptions = {}) {
     if (req.method === 'GET' && url.pathname === '/api/demo/session') return demoSession(req, res)
     if (req.method === 'POST' && url.pathname === '/api/demo/unlock') return demoUnlock(req, res)
     if (req.method === 'POST' && url.pathname === '/api/demo/lock') return demoLock(res)
+    if (req.method === 'POST' && url.pathname === '/api/speech/scribe') return scribeClip(req, res)
+    if (req.method === 'POST' && url.pathname === '/api/speech/scribe-token') return scribeToken(req, res)
     if (parts[0] === 'api' && parts[1] === 'channels' && parts[2]) return channelRoute(req, res, parts[2], parts.slice(3))
     if (req.method === 'GET' && config.staticDir) return serveStatic(res, url.pathname)
     send(res, 404, { error: 'not_found', message: 'No such route.' })
@@ -144,6 +150,18 @@ export function createApp(options: AppOptions = {}) {
         translate: translator.status(),
         tts: tts.status(),
         qa: { id: 'lexical', mode: 'live', detail: 'Quotes the commander-approved file only.' },
+        scribe: {
+          id: 'elevenlabs',
+          mode: config.elevenLabsApiKey ? 'configured' : 'unconfigured',
+          model: 'scribe_v2',
+          realtimeModel: 'scribe_v2_realtime',
+          detail: scribeConfiguredDetail(Boolean(config.elevenLabsApiKey)),
+        },
+        device: {
+          asr: 'whisper-tiny',
+          translate: 'opus-browser',
+          detail: 'Live radio captions run in the browser. This server does not have to load those models.',
+        },
       },
       auth: {
         admin: config.adminToken ? 'required' : 'unconfigured',
@@ -176,6 +194,87 @@ export function createApp(options: AppOptions = {}) {
   function demoLock(res: http.ServerResponse) {
     res.setHeader('set-cookie', clearDemoCookie())
     send(res, 200, { access: 'none' })
+  }
+
+  function demoAllowed(req: http.IncomingMessage): boolean {
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
+    const id = readCookie(req.headers.cookie, 'sanket_demo')
+    return gate.valid(id) && (!origin || config.demoOrigins.includes(origin))
+  }
+
+  function cloudAllowed(req: http.IncomingMessage): boolean {
+    if (demoAllowed(req)) return true
+    return authorize(req.headers.authorization, config.ingestToken) === 'ok'
+  }
+
+  function scribeLimited(ip: string): boolean {
+    const at = now()
+    const hit = scribeHits.get(ip)
+    if (!hit || at - hit.start > 10 * 60 * 1000) {
+      scribeHits.set(ip, { count: 1, start: at })
+      return false
+    }
+    hit.count += 1
+    return hit.count > 30
+  }
+
+  async function scribeClip(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (req.headers['x-cloud-consent'] !== 'yes') {
+      send(res, 400, { error: 'consent', message: 'Cloud transcription needs an explicit opt-in on this device.', translates: false })
+      return
+    }
+    if (!cloudAllowed(req)) {
+      send(res, 401, { error: 'unauthorized', message: 'Unlock shared demo access, or present the ingest token, before using cloud transcription.', translates: false })
+      return
+    }
+    if (scribeLimited(clientIp(req))) {
+      send(res, 429, { error: 'rate_limited', message: 'Too many cloud transcription requests. Wait about 10 minutes.', translates: false })
+      return
+    }
+    if (!scribe) {
+      send(res, 503, { error: 'scribe_unconfigured', message: scribeConfiguredDetail(false), translates: false })
+      return
+    }
+    const wav = await readBody(req, config.audioMaxBytes)
+    if (wav === 'too_large') {
+      send(res, 413, { error: 'too_large', message: 'The audio is over the size limit.', translates: false })
+      return
+    }
+    if (wav.length < 1000) {
+      send(res, 400, { error: 'audio', message: 'The clip is too short to transcribe.', translates: false })
+      return
+    }
+    const language = headerString(req, 'x-language')
+    const code = language === 'en' || language === 'hi' || language === 'te' ? language : 'te'
+    try {
+      const text = await scribe.convert(wav, code)
+      send(res, 200, { text, provider: 'elevenlabs-scribe', model: 'scribe_v2', mode: 'live', translates: false })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Scribe failed'
+      send(res, 502, { error: 'scribe_failed', message: message.slice(0, 180), translates: false })
+    }
+  }
+
+  async function scribeToken(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (req.headers['x-cloud-consent'] !== 'yes') {
+      send(res, 400, { error: 'consent', message: 'A realtime token needs an explicit cloud opt-in.', translates: false })
+      return
+    }
+    if (!cloudAllowed(req)) {
+      send(res, 401, { error: 'unauthorized', message: 'Unlock shared demo access, or present the ingest token, before requesting a realtime token.', translates: false })
+      return
+    }
+    if (!scribe) {
+      send(res, 503, { error: 'scribe_unconfigured', message: scribeConfiguredDetail(false), translates: false })
+      return
+    }
+    try {
+      const token = await scribe.realtimeToken()
+      send(res, 200, { token, modelId: 'scribe_v2_realtime', expires: '15m', translates: false })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The realtime token was not issued.'
+      send(res, 502, { error: 'scribe_failed', message: message.slice(0, 180), translates: false })
+    }
   }
 
   async function demoUnlock(req: http.IncomingMessage, res: http.ServerResponse) {

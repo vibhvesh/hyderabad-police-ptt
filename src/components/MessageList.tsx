@@ -61,14 +61,26 @@ export function MessageList({ messages, onForward }: { messages: ChatMessage[]; 
             </div>
           </div>
           <p className="mt-2 text-sm leading-snug text-slate-800">
-            {message.pending ? (
-              <span className="text-slate-500">Transcribing…</span>
-            ) : message.error ? (
+            {message.phase === 'transcribing' || (message.pending && !message.transcript) ? (
+              <span className="text-slate-500">{message.via === 'scribe' ? 'Cloud transcription…' : 'Transcribing on this device…'}</span>
+            ) : message.error && !message.transcript ? (
               <span className="text-red-700">{message.error}</span>
             ) : (
               message.transcript
             )}
           </p>
+          {message.role === 'assistant' || (!message.translation && !message.translationNote && message.phase !== 'translating') ? null : (
+            <p className="mt-1 text-sm leading-snug text-emerald-900">
+              {message.phase === 'translating' ? (
+                <span className="text-slate-500">Translating on this device…</span>
+              ) : message.translation ? (
+                message.translation
+              ) : (
+                <span className="text-slate-500">{message.translationNote}</span>
+              )}
+            </p>
+          )}
+          {message.via === 'scribe' ? <p className="mt-1 text-xs text-slate-500">Transcript from Scribe. Translation stayed on this device.</p> : null}
           {message.citation ? <p className="mt-1 text-xs text-teal-800">{message.citation}</p> : null}
           <p className="mt-1 text-xs text-slate-500">{formatLoc(message.loc)}</p>
           {onForward && message.transcript && !message.pending && message.role !== 'assistant' ? (

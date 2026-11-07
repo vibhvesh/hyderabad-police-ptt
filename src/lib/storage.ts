@@ -1,9 +1,10 @@
-import type { EngineId, LangId } from './types.ts'
+import type { LangId } from './types.ts'
 
 const NAME = 'hp-unit-name'
 const LANG = 'hp-lang'
-const ENGINE = 'hp-engine'
 const KEY = 'hp-eleven-key'
+const TARGET = 'hp-target-lang'
+const CLOUD = 'hp-cloud-fallback'
 const BACKEND = 'sanket-backend-url'
 const TRANSPORT = 'sanket-transport'
 const TOPIC = 'sanket-topic'
@@ -51,20 +52,31 @@ export function saveLang(lang: LangId) {
   write(LANG, lang)
 }
 
-export function loadEngine(): EngineId {
-  return read(ENGINE) === 'elevenlabs' ? 'elevenlabs' : 'whisper'
+export function loadTarget(): LangId {
+  const value = read(TARGET)
+  if (value === 'te' || value === 'en' || value === 'hi') return value
+  return 'en'
 }
 
-export function saveEngine(engine: EngineId) {
-  write(ENGINE, engine)
+export function saveTarget(lang: LangId) {
+  write(TARGET, lang)
 }
 
-export function loadElevenKey(): string {
-  return read(KEY) ?? ''
+export function loadCloudFallback(): boolean {
+  return read(CLOUD) === 'yes'
 }
 
-export function saveElevenKey(key: string) {
-  write(KEY, key.trim())
+export function saveCloudFallback(enabled: boolean) {
+  write(CLOUD, enabled ? 'yes' : 'no')
+}
+
+/** Older builds stored an ElevenLabs key in the browser. Drop it so it cannot be sent. */
+export function clearStoredSpeechKey() {
+  try {
+    localStorage.removeItem(KEY)
+  } catch {
+    /* private mode */
+  }
 }
 
 export type TransportMode = 'auto' | 'mqtt' | 'server'

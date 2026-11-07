@@ -7,6 +7,7 @@ import { forwardMessage } from '@/lib/api'
 import { CHANNEL_LABEL } from '@/lib/constants'
 import { formatLoc } from '@/lib/format'
 import { PHASE_CLASS, PHASE_LABEL } from '@/lib/phase'
+import { translationPlan } from '@/lib/translation-plan'
 import { LANGUAGES, type LangId } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -53,20 +54,32 @@ export function PttView() {
         <p className="text-center text-sm font-medium" aria-live="polite">{detailFor(ptt.phase, ptt.talker, ptt.net.detail)}</p>
         <p className="text-center text-xs text-slate-500">Hold the button, or hold Space. One speaker at a time.</p>
         {ptt.micError ? <p className="text-center text-sm text-red-700">{ptt.micError}</p> : null}
-        <div className="grid w-full grid-cols-3 gap-2" role="group" aria-label="Transcription language">
+        <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Spoken language</p>
+        <div className="grid w-full grid-cols-3 gap-2" role="group" aria-label="Spoken language">
           {LANGUAGES.map((language) => (
             <Button key={language.id} type="button" variant={ptt.lang === language.id ? 'default' : 'outline'} aria-pressed={ptt.lang === language.id} onClick={() => ptt.setLang(language.id as LangId)}>
               {language.label}
             </Button>
           ))}
         </div>
-        <p className="text-xs text-slate-500">{ptt.model.state === 'ready' ? 'On-device speech model ready' : ptt.model.state === 'loading' ? `Downloading speech model · ${ptt.model.progress}%` : ptt.model.state === 'error' ? ptt.model.message : 'Speech model downloads on first use'}</p>
+        <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Show translation in</p>
+        <div className="grid w-full grid-cols-3 gap-2" role="group" aria-label="Translation language">
+          {LANGUAGES.map((language) => (
+            <Button key={`out-${language.id}`} type="button" variant={ptt.target === language.id ? 'default' : 'outline'} aria-pressed={ptt.target === language.id} onClick={() => ptt.setTarget(language.id as LangId)}>
+              {language.label}
+            </Button>
+          ))}
+        </div>
+        <p className="text-xs text-slate-500">{ptt.runtimeNote}</p>
+        <p className="text-xs text-slate-500">{ptt.model.state === 'ready' ? 'On-device Whisper tiny is ready' : ptt.model.state === 'loading' ? `Downloading Whisper tiny · ${ptt.model.progress}% · about 41 MB` : ptt.model.state === 'error' ? ptt.model.message : 'Whisper tiny downloads on first use. Talking is not blocked.'}</p>
+        <p className="text-xs text-slate-500">{translationPlan(ptt.lang, ptt.target).note}</p>
+        <p className="text-xs text-slate-500">{ptt.translationModel.state === 'ready' ? 'Translation model ready on this device' : ptt.translationModel.state === 'loading' ? `Downloading ${ptt.translationModel.model} · ${ptt.translationModel.progress}%` : ptt.translationModel.state === 'error' ? ptt.translationModel.message : 'Translation downloads when the languages differ.'}</p>
         <div className="w-full rounded-xl bg-white px-3 py-3 text-sm">
           <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase">This unit</p>
           <p>{ptt.name}</p>
           <p className="text-xs text-slate-500">{ptt.loc ? formatLoc(ptt.loc) : ptt.geoNote}</p>
         </div>
-        <SettingsDialog name={ptt.name} engine={ptt.engine} apiKey={ptt.apiKey} onName={ptt.setName} onEngine={ptt.setEngine} onApiKey={ptt.setApiKey} />
+        <SettingsDialog name={ptt.name} cloudFallback={ptt.cloudFallback} onName={ptt.setName} onCloudFallback={ptt.setCloudFallback} />
       </section>
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">

@@ -6,18 +6,15 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DEFAULT_TOPIC_ROOT, LEGACY_TOPIC_ROOT } from '@/lib/net'
 import { loadBackend, loadTopic, loadTransport, saveBackend, saveTopic, saveTransport, type TransportMode } from '@/lib/storage'
-import type { EngineId } from '@/lib/types'
 
 type Props = {
   name: string
-  engine: EngineId
-  apiKey: string
+  cloudFallback: boolean
   onName: (value: string) => void
-  onEngine: (value: EngineId) => void
-  onApiKey: (value: string) => void
+  onCloudFallback: (value: boolean) => void
 }
 
-export function SettingsDialog({ name, engine, apiKey, onName, onEngine, onApiKey }: Props) {
+export function SettingsDialog({ name, cloudFallback, onName, onCloudFallback }: Props) {
   const [transport, setTransport] = useState<TransportMode>(loadTransport)
   const [backend, setBackend] = useState(loadBackend)
   const [topic, setTopic] = useState(loadTopic() || DEFAULT_TOPIC_ROOT)
@@ -31,7 +28,7 @@ export function SettingsDialog({ name, engine, apiKey, onName, onEngine, onApiKe
       <DialogContent>
         <DialogTitle>Settings</DialogTitle>
         <DialogDescription>
-          No login. Your unit name is only a label on this channel. The speech key stays in this browser.
+          No login. Your unit name is only a label on this channel. Speech recognition runs on this device.
         </DialogDescription>
         <div className="mt-4 flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
@@ -44,44 +41,18 @@ export function SettingsDialog({ name, engine, apiKey, onName, onEngine, onApiKe
               onChange={(event) => onName(event.target.value)}
             />
           </div>
-          <div className="flex flex-col gap-2">
-            <Label>Transcription</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant={engine === 'whisper' ? 'default' : 'outline'}
-                aria-pressed={engine === 'whisper'}
-                onClick={() => onEngine('whisper')}
-              >
-                On-device Whisper
-              </Button>
-              <Button
-                type="button"
-                variant={engine === 'elevenlabs' ? 'default' : 'outline'}
-                aria-pressed={engine === 'elevenlabs'}
-                onClick={() => onEngine('elevenlabs')}
-              >
-                ElevenLabs Scribe
-              </Button>
-            </div>
-            <p className="text-xs leading-relaxed text-slate-600">
-              Whisper base runs in the browser, downloads once, and is cached on this device. Scribe sends the clip to
-              ElevenLabs only when that option is selected.
-            </p>
-          </div>
-          {engine === 'elevenlabs' ? (
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="eleven-key">ElevenLabs API key</Label>
-              <Input
-                id="eleven-key"
-                type="password"
-                value={apiKey}
-                autoComplete="off"
-                placeholder="xi-…"
-                onChange={(event) => onApiKey(event.target.value)}
-              />
-            </div>
-          ) : null}
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={cloudFallback}
+              onChange={(event) => onCloudFallback(event.target.checked)}
+            />
+            <span>
+              If on-device Whisper fails, send that finished clip to ElevenLabs Scribe v2 through this server.
+              This can spend paid credits. Scribe only transcribes. Translation still runs on this device.
+              The API key stays on the server. Shared demo access has to be unlocked before a cloud clip is accepted.
+            </span>
+          </label>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="relay-mode">Relay</Label>
             <select

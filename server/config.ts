@@ -33,6 +33,7 @@ export type Config = {
   tlsKey: string | null
   demoAccessCode: string | null
   demoOrigins: string[]
+  elevenLabsApiKey: string | null
 }
 
 function blank(value: string | undefined): string | null {
@@ -85,5 +86,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .split(',')
       .map((origin) => origin.trim())
       .filter(Boolean),
+    elevenLabsApiKey: blank(env.ELEVENLABS_API_KEY),
   }
 }

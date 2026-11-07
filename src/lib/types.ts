@@ -5,23 +5,27 @@ export type GeoFix = {
 }
 
 export type LangId = 'te' | 'en' | 'hi'
-export type EngineId = 'whisper' | 'elevenlabs'
 
 export type ChatMessage = {
   key: string
   name: string
   mine: boolean
+  direction?: 'tx' | 'rx'
+  sourceLang?: LangId
+  targetLang?: LangId
   t0: number
   dur: number
   url: string
   loc: GeoFix | null
   transcript: string | null
+  translation: string | null
+  translationNote: string | null
+  via?: 'device' | 'scribe'
   error: string | null
   pending: boolean
+  phase?: 'transcribing' | 'translating' | 'done' | 'error'
   role?: 'unit' | 'assistant'
   citation?: string | null
-  translation?: string | null
-  translationNote?: string | null
 }
 
 export type LangOption = {

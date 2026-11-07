@@ -24,5 +24,7 @@ export const DISCLAIMER = 'Demo only, not for professional use'
 
 export { DEFAULT_BROKERS as BROKERS, DEFAULT_TOPIC_ROOT, LEGACY_TOPIC_ROOT } from './net.ts'
 
-export const WHISPER_MODEL = 'onnx-community/whisper-base'
-export const ELEVEN_MODEL = 'scribe_v1'
+/** Tiny quantized Whisper fits a phone. Larger Whisper models are not downloaded. */
+export const WHISPER_MODEL = 'onnx-community/whisper-tiny'
+export const SCRIBE_BATCH_MODEL = 'scribe_v2'
+export const SCRIBE_REALTIME_MODEL = 'scribe_v2_realtime'

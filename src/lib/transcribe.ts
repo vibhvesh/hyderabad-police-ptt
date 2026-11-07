@@ -1,4 +1,3 @@
-import { ELEVEN_MODEL } from './constants.ts'
 import type { WorkerOut } from './whisper-types.ts'
 
 export type ModelStatus =
@@ -79,27 +78,3 @@ export async function transcribeLocal(audio: Float32Array, language: string): Pr
   })
 }
 
-export async function transcribeEleven(wav: ArrayBuffer, language: string, apiKey: string): Promise<string> {
-  const body = new FormData()
-  body.append('model_id', ELEVEN_MODEL)
-  body.append('language_code', language)
-  body.append('file', new Blob([wav], { type: 'audio/wav' }), 'clip.wav')
-  const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-    method: 'POST',
-    headers: { 'xi-api-key': apiKey },
-    body,
-  })
-  if (!response.ok) {
-    let detail = `ElevenLabs returned ${response.status}`
-    try {
-      const payload = (await response.json()) as { detail?: { message?: string } | string }
-      if (typeof payload.detail === 'string') detail = payload.detail
-      else if (payload.detail?.message) detail = payload.detail.message
-    } catch {
-      /* keep the status text */
-    }
-    throw new Error(detail.slice(0, 180))
-  }
-  const payload = (await response.json()) as { text?: string }
-  return (payload.text ?? '').trim()
-}

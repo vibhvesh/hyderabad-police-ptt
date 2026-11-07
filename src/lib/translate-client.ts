@@ -1,5 +1,5 @@
-import { apiFetch, backendBase, INGEST_TOKEN_KEY } from './api.ts'
-import { loadSession } from './storage.ts'
+import { translateLocal } from './translate-local.ts'
+import type { LangId } from './types.ts'
 
 export type Translation =
   | { state: 'same'; text: string; note: string }
@@ -7,49 +7,21 @@ export type Translation =
   | { state: 'unconfigured'; text: ''; note: string }
   | { state: 'error'; text: ''; note: string }
 
-type BrowserTranslator = {
-  translate: (text: string) => Promise<string>
-}
-
 export async function translateText(text: string, source: string, target: string): Promise<Translation> {
   const original = text.trim()
   if (!original) return { state: 'same', text: '', note: 'Nothing to translate.' }
-  if (source === target) return { state: 'same', text: original, note: 'Source and translation language are the same.' }
-  const token = loadSession(INGEST_TOKEN_KEY)
-  if (backendBase() && token) {
-    try {
-      const response = await apiFetch('/api/translate', token, {
-        method: 'POST',
-        body: JSON.stringify({ text: original, source, target }),
-      })
-      const body = (await response.json()) as { text?: string; provider?: string; message?: string; mode?: string }
-      if (!response.ok) return { state: 'unconfigured', text: '', note: body.message ?? 'Server translation is not configured.' }
-      return { state: 'translated', text: body.text ?? '', note: `Translated by ${body.provider ?? 'server'} (${body.mode ?? 'live'}).` }
-    } catch {
-      return { state: 'error', text: '', note: 'The translation server could not be reached.' }
-    }
+  if (source !== 'te' && source !== 'en' && source !== 'hi') {
+    return { state: 'unconfigured', text: '', note: 'Translation on this device supports Telugu, Hindi, and English.' }
   }
-  const browser = await browserTranslator(source, target)
-  if (browser) {
-    try {
-      return { state: 'translated', text: await browser.translate(original), note: 'Translated by this browser.' }
-    } catch (error) {
-      return { state: 'error', text: '', note: error instanceof Error ? error.message : 'Browser translation failed.' }
-    }
+  if (target !== 'te' && target !== 'en' && target !== 'hi') {
+    return { state: 'unconfigured', text: '', note: 'Translation on this device supports Telugu, Hindi, and English.' }
   }
-  return {
-    state: 'unconfigured',
-    text: '',
-    note: 'Translation is not configured. Set a server translator, or use a browser with the Translator API. The original text is unchanged.',
-  }
-}
-
-async function browserTranslator(source: string, target: string): Promise<BrowserTranslator | null> {
-  const host = globalThis as { Translator?: { create: (options: { sourceLanguage: string; targetLanguage: string }) => Promise<BrowserTranslator> } }
-  if (!host.Translator?.create) return null
   try {
-    return await host.Translator.create({ sourceLanguage: source, targetLanguage: target })
-  } catch {
-    return null
+    const result = await translateLocal(original, source as LangId, target as LangId)
+    return result.state === 'same'
+      ? { state: 'same', text: original, note: result.note }
+      : { state: 'translated', text: result.text, note: result.note }
+  } catch (error) {
+    return { state: 'error', text: '', note: error instanceof Error ? error.message : 'On-device translation failed.' }
   }
 }

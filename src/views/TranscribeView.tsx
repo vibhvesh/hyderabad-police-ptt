@@ -115,7 +115,7 @@ export function TranscribeView() {
 
   return (
     <main className="flex flex-col gap-4 px-4 py-5">
-      <p className="text-sm text-slate-600">Live microphone and audio upload. Recognition stays on this device unless you explicitly send a file to a configured server.</p>
+      <p className="text-sm text-slate-600">Separate recorder for a file or a microphone take. Live radio messages are transcribed on the Talk page. Recognition stays on this device unless you explicitly send a file to a configured server.</p>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">Recognition
           <select className="mt-1 w-full rounded-md border px-2 py-2" value={source} onChange={(event) => setSource(event.target.value as LangId)}>

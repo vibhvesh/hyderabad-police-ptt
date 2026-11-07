@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PcmRing, buildWav, concatInt16, downsampleToPcm, rms, toWhisperAudio } from '../lib/audio.ts'
+import { PcmRing, buildWav, concatInt16, downsampleToPcm, toWhisperAudio } from '../lib/audio.ts'
 import {
   CLIP_GAP_MS,
   MAX_CLIP_MS,
@@ -7,7 +7,7 @@ import {
   SAMPLE_RATE,
   TAIL_MS,
 } from '../lib/constants.ts'
-import { readableTranscript, type GeoFix } from '../lib/format.ts'
+import { type GeoFix } from '../lib/format.ts'
 import { ASSISTANT_ID } from '../lib/assistant.ts'
 import { isExplicitQuestion } from '../lib/questions.ts'
 import { micErrorMessage } from '../lib/media-errors.ts'
@@ -18,21 +18,27 @@ import { Radio, type RadioView, type Speaker } from '../lib/radio.ts'
 import { RelayWire } from '../lib/relay-transport.ts'
 import type { NetSnapshot, Wire } from '../lib/transport.ts'
 import { askChannel } from '../lib/api.ts'
+import { CaptionQueue, type CaptionJob } from '../lib/caption-queue.ts'
+import { speechRuntime } from '../lib/device-speech.ts'
+import { readableTranscript } from '../lib/format.ts'
 import {
-  loadElevenKey,
-  loadEngine,
-  loadLang,
+  clearStoredSpeechKey,
   loadBackend,
+  loadCloudFallback,
+  loadLang,
   loadName,
+  loadTarget,
   loadTopic,
   loadTransport,
-  saveElevenKey,
-  saveEngine,
+  saveCloudFallback,
   saveLang,
   saveName,
+  saveTarget,
 } from '../lib/storage.ts'
-import { ensureModel, transcribeEleven, transcribeLocal, watchModel, type ModelStatus } from '../lib/transcribe.ts'
-import { LANGUAGES, type ChatMessage, type EngineId, type LangId } from '../lib/types.ts'
+import { transcribeScribe } from '../lib/scribe-client.ts'
+import { ensureModel, transcribeLocal, watchModel, type ModelStatus } from '../lib/transcribe.ts'
+import { ensureTranslation, translateLocal, watchTranslation, type TranslateStatus } from '../lib/translate-local.ts'
+import { LANGUAGES, type ChatMessage, type LangId } from '../lib/types.ts'
 
 export type { Phase }
 
@@ -63,8 +69,6 @@ type OpenClip = {
   mine: boolean
 }
 
-type Job = { key: string; pcm: Int16Array; wav: ArrayBuffer; lang: LangId; mine: boolean }
-
 const EMPTY_RADIO: RadioView = { users: [], floor: null, me: '', online: false }
 
 function langOption(id: LangId) {
@@ -74,9 +78,11 @@ function langOption(id: LangId) {
 export function usePtt() {
   const [name, setNameState] = useState(loadName)
   const [lang, setLangState] = useState<LangId>(loadLang)
-  const [engine, setEngineState] = useState<EngineId>(loadEngine)
-  const [apiKey, setApiKeyState] = useState(loadElevenKey)
+  const [target, setTargetState] = useState<LangId>(loadTarget)
+  const [cloudFallback, setCloudFallbackState] = useState(loadCloudFallback)
   const [model, setModel] = useState<ModelStatus>({ state: 'idle' })
+  const [translationModel, setTranslationModel] = useState<TranslateStatus>({ state: 'idle' })
+  const [runtimeNote] = useState(() => speechRuntime().note)
   const [radioState, setRadioState] = useState<RadioView>(EMPTY_RADIO)
   const [net, setNet] = useState<NetSnapshot>({
     state: 'connecting',
@@ -100,8 +106,8 @@ export function usePtt() {
 
   const nameRef = useRef(name)
   const langRef = useRef(lang)
-  const engineRef = useRef(engine)
-  const keyRef = useRef(apiKey)
+  const targetRef = useRef(target)
+  const cloudRef = useRef(cloudFallback)
   const locRef = useRef<GeoFix | null>(null)
   const radioRef = useRef<Radio | null>(null)
   const floorRef = useRef<RadioView['floor']>(null)
@@ -115,8 +121,7 @@ export function usePtt() {
   const rxRef = useRef<OpenClip | null>(null)
   const lastRxRef = useRef(0)
   const ringRef = useRef(new PcmRing(Math.round((PRE_ROLL_MS / 1000) * SAMPLE_RATE)))
-  const jobsRef = useRef<Job[]>([])
-  const pumpingRef = useRef(false)
+  const queueRef = useRef<CaptionQueue | null>(null)
   const acRef = useRef<AudioContext | null>(null)
   const playAtRef = useRef(0)
   const streamRef = useRef<MediaStream | null>(null)
@@ -125,53 +130,42 @@ export function usePtt() {
 
   nameRef.current = name
   langRef.current = lang
-  engineRef.current = engine
-  keyRef.current = apiKey
+  targetRef.current = target
+  cloudRef.current = cloudFallback
   locRef.current = loc
 
   function patchMessage(key: string, patch: Partial<ChatMessage>) {
     setMessages((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
   }
 
-  async function pump() {
-    if (pumpingRef.current) return
-    pumpingRef.current = true
-    while (jobsRef.current.length > 0) {
-      const job = jobsRef.current.shift()
-      if (!job) break
-      const option = langOption(job.lang)
-      try {
-        let text = ''
-        if (engineRef.current === 'elevenlabs') {
-          const key = keyRef.current.trim()
-          if (!key) throw new Error('Add an ElevenLabs API key in settings.')
-          text = await transcribeEleven(job.wav, option.eleven, key)
-        } else {
-          text = await transcribeLocal(toWhisperAudio(job.pcm), option.whisper)
-        }
-        const transcript = readableTranscript(text)
-        patchMessage(job.key, { pending: false, transcript, error: null })
-        if (job.mine && isExplicitQuestion(transcript) && transcript !== 'No speech detected') {
-          void askChannel(transcript, meRef.current, topicRef.current)
-        }
-      } catch (error) {
-        patchMessage(job.key, {
-          pending: false,
-          transcript: null,
-          error: error instanceof Error ? error.message : 'Transcription failed',
-        })
-      }
+  function queue(): CaptionQueue {
+    if (!queueRef.current) {
+      queueRef.current = new CaptionQueue({
+        transcribe: async (job) => {
+          const option = langOption(job.sourceLang)
+          try {
+            const text = readableTranscript(await transcribeLocal(toWhisperAudio(job.pcm), option.whisper))
+            return { text, via: 'device' as const }
+          } catch (error) {
+            if (!cloudRef.current || !job.wav) throw error
+            const text = readableTranscript(await transcribeScribe(job.wav, option.eleven))
+            return { text, via: 'scribe' as const }
+          }
+        },
+        translate: (text, source, targetLang) => translateLocal(text, source, targetLang),
+        onUpdate: (messageId, patch, job) => {
+          patchMessage(messageId, patch)
+          if (job.direction === 'tx' && patch.phase === 'done' && patch.transcript && isExplicitQuestion(patch.transcript) && patch.transcript !== 'No speech detected') {
+            void askChannel(patch.transcript, meRef.current, topicRef.current)
+          }
+        },
+      })
     }
-    pumpingRef.current = false
+    return queueRef.current
   }
 
-  function enqueue(key: string, pcm: Int16Array, wav: ArrayBuffer, mine: boolean) {
-    if (rms(pcm) < 0.01) {
-      patchMessage(key, { pending: false, transcript: 'No speech detected', error: null })
-      return
-    }
-    jobsRef.current.push({ key, pcm, wav, lang: langRef.current, mine })
-    void pump()
+  function enqueue(job: CaptionJob) {
+    queue().enqueue(job)
   }
 
   function publishClip(clip: OpenClip) {
@@ -183,13 +177,19 @@ export function usePtt() {
       key: crypto.randomUUID(),
       name: clip.name,
       mine: clip.mine,
+      direction: clip.mine ? 'tx' : 'rx',
+      sourceLang: langRef.current,
+      targetLang: targetRef.current,
       t0: clip.t0,
       dur: pcm.length / SAMPLE_RATE,
       url,
       loc: clip.loc,
       transcript: null,
+      translation: null,
+      translationNote: null,
       error: null,
       pending: true,
+      phase: 'transcribing',
     }
     setMessages((prev) => {
       const next = [message, ...prev].slice(0, 40)
@@ -199,7 +199,16 @@ export function usePtt() {
       }
       return next
     })
-    enqueue(message.key, pcm, wav, clip.mine)
+    enqueue({
+      messageId: message.key,
+      direction: message.direction ?? 'rx',
+      speakerId: clip.id,
+      selfId: meRef.current,
+      sourceLang: langRef.current,
+      targetLang: targetRef.current,
+      pcm,
+      wav,
+    })
   }
 
   function finishTx() {
@@ -407,8 +416,11 @@ export function usePtt() {
   }
 
   useEffect(() => {
+    clearStoredSpeechKey()
     watchModel(setModel)
-    if (loadEngine() === 'whisper') ensureModel()
+    watchTranslation(setTranslationModel)
+    const runtime = speechRuntime()
+    if (runtime.worker && runtime.wasm) ensureModel()
   }, [])
 
   useEffect(() => {
@@ -452,8 +464,11 @@ export function usePtt() {
               url,
               loc: null,
               transcript: notice.text,
+              translation: null,
+              translationNote: null,
               error: null,
               pending: false,
+              phase: 'done' as const,
               role: 'assistant' as const,
               citation: notice.citation,
             },
@@ -534,8 +549,8 @@ export function usePtt() {
   }, [])
 
   useEffect(() => {
-    if (engine === 'whisper') ensureModel()
-  }, [engine])
+    if (speechRuntime().worker) ensureTranslation(lang, target)
+  }, [lang, target])
 
   const floor = radioState.floor
   const me = radioState.me
@@ -567,15 +582,14 @@ export function usePtt() {
     saveLang(value)
   }
 
-  function setEngine(value: EngineId) {
-    setEngineState(value)
-    saveEngine(value)
-    if (value === 'whisper') ensureModel()
+  function setTarget(value: LangId) {
+    setTargetState(value)
+    saveTarget(value)
   }
 
-  function setApiKey(value: string) {
-    setApiKeyState(value)
-    saveElevenKey(value)
+  function setCloudFallback(value: boolean) {
+    setCloudFallbackState(value)
+    saveCloudFallback(value)
   }
 
   function clearMessages() {
@@ -591,11 +605,13 @@ export function usePtt() {
     setName,
     lang,
     setLang,
-    engine,
-    setEngine,
-    apiKey,
-    setApiKey,
+    target,
+    setTarget,
+    cloudFallback,
+    setCloudFallback,
     model,
+    translationModel,
+    runtimeNote,
     phase,
     net,
     users: radioState.users,
