@@ -16,15 +16,13 @@ export const PRESENCE_EXPIRE_MS = 15_000
 export const CLIP_GAP_MS = 1_200
 export const MAX_CLIP_MS = 60_000
 
-export const CHANNEL_LABEL = 'HYD-1'
-export const TOPIC_ROOT = 'hyd-police-ptt/demo1/hyd-1/'
+export const CHANNEL_LABEL = 'SANKET-1'
+export const TOPIC_ROOT = 'sanket-ptt/v1/sanket-1/'
+export const PRODUCT = 'Sanket PTT'
+export const TRANSCRIBE_PRODUCT = 'Sanket Transcribe'
+export const DISCLAIMER = 'Demo only, not for professional use'
 
-export const BROKERS = [
-  'wss://broker.hivemq.com:8884/mqtt',
-  'wss://broker.emqx.io:8084/mqtt',
-  'wss://test.mosquitto.org:8081',
-  'wss://public:public@public.cloud.shiftr.io',
-]
+export { DEFAULT_BROKERS as BROKERS, DEFAULT_TOPIC_ROOT, LEGACY_TOPIC_ROOT } from './net.ts'
 
 export const WHISPER_MODEL = 'onnx-community/whisper-base'
 export const ELEVEN_MODEL = 'scribe_v1'

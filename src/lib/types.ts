@@ -18,6 +18,10 @@ export type ChatMessage = {
   transcript: string | null
   error: string | null
   pending: boolean
+  role?: 'unit' | 'assistant'
+  citation?: string | null
+  translation?: string | null
+  translationNote?: string | null
 }
 
 export type LangOption = {

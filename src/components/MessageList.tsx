@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { formatClock, formatDur, formatLoc } from '@/lib/format'
 import type { ChatMessage } from '@/lib/types'
 
-export function MessageList({ messages }: { messages: ChatMessage[] }) {
+export function MessageList({ messages, onForward }: { messages: ChatMessage[]; onForward?: (message: ChatMessage) => void }) {
   const player = useRef<HTMLAudioElement>(new Audio())
   const [playing, setPlaying] = useState<string | null>(null)
 
@@ -69,7 +69,13 @@ export function MessageList({ messages }: { messages: ChatMessage[] }) {
               message.transcript
             )}
           </p>
+          {message.citation ? <p className="mt-1 text-xs text-teal-800">{message.citation}</p> : null}
           <p className="mt-1 text-xs text-slate-500">{formatLoc(message.loc)}</p>
+          {onForward && message.transcript && !message.pending && message.role !== 'assistant' ? (
+            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => onForward(message)}>
+              Forward to knowledge
+            </Button>
+          ) : null}
         </li>
       ))}
     </ul>

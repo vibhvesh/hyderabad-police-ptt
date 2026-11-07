@@ -1,0 +1,14 @@
+# Local or Raspberry Pi server. This file does not start a paid translator or a mailbox.
+services:
+  sanket:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - sanket-data:/data
+    restart: unless-stopped
+
+volumes:
+  sanket-data:
