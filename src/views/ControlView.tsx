@@ -234,7 +234,7 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <nav className="flex flex-wrap gap-2 px-5 pt-4 text-sm" aria-label="Control room">
-        <a className={page.name === 'dashboard' ? 'rounded-full bg-[#0c3d82] px-3 py-1 font-semibold text-white' : 'rounded-full border px-3 py-1 font-semibold text-[#0c3d82]'} href="#/control">Wall</a>
+        <a className={page.name === 'dashboard' ? 'rounded-full bg-[#0c3d82] px-3 py-1 font-semibold text-white' : 'rounded-full border px-3 py-1 font-semibold text-[#0c3d82]'} href="#/control/display">Display Board</a>
         <a className={page.name === 'manage' ? 'rounded-full bg-[#0c3d82] px-3 py-1 font-semibold text-white' : 'rounded-full border px-3 py-1 font-semibold text-[#0c3d82]'} href="#/control/manage">Settings</a>
         <a className="rounded-full border px-3 py-1 font-semibold text-[#0c3d82]" href="#/reference">Reference</a>
       </nav>
