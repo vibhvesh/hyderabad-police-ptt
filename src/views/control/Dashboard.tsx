@@ -1,4 +1,5 @@
 import { countPhrase } from '@/lib/control-page'
+import { latestProviderWarning, voiceBadge } from '@/lib/voice-choice'
 import { formatIst } from '@/lib/ist'
 import { LevelMeter, Sparkline } from '@/views/control/Meters'
 import { lineClients, secondsLeft, useWallData, type WallClip, type WallFloor, type WallHandset, type WallLine, type WallUser } from '@/views/control/useWallData'
@@ -40,6 +41,7 @@ export function Dashboard() {
               history={wall.history[line.id] ?? [0]}
               left={secondsLeft(wall.talkStart, line.id, now)}
               caption={wall.clips.find((clip) => clip.lineId === line.id) ?? null}
+              warning={latestProviderWarning(wall.activity, line.id)}
             />
           ))}
         </section>
@@ -74,7 +76,7 @@ function Stat({ label, value, detail }: { label: string; value: string; detail?:
   )
 }
 
-function LineTile({ line, users, floor, history, left, caption }: { line: WallLine; users: WallUser[]; floor: WallFloor | null; history: number[]; left: number | null; caption: WallClip | null }) {
+function LineTile({ line, users, floor, history, left, caption, warning }: { line: WallLine; users: WallUser[]; floor: WallFloor | null; history: number[]; left: number | null; caption: WallClip | null; warning: string | null }) {
   const counts = lineClients(users, line.id)
   const level = Math.round((history.reduce((sum, value) => sum + value, 0) / Math.max(1, history.length)) * 100)
   return (
@@ -84,9 +86,13 @@ function LineTile({ line, users, floor, history, left, caption }: { line: WallLi
           <h2 className="text-lg font-semibold">{line.name}</h2>
           <p className="text-xs text-slate-500">{line.id} · {line.enabled ? 'on' : 'off'} · {line.sourceLang} to {line.targetLang}</p>
         </div>
-        <p className={floor ? 'rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900' : 'rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600'}>
-          {floor ? 'Talking' : 'Idle'}
-        </p>
+        <div className="flex flex-wrap justify-end gap-1">
+          <p className="rounded-full bg-[#0c3d82] px-2 py-1 text-xs font-semibold text-white">{voiceBadge(line.ttsProvider)}</p>
+          {line.asrProvider === 'elevenlabs' ? <p className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-900">Scribe</p> : null}
+          <p className={floor ? 'rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900' : 'rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600'}>
+            {floor ? 'Talking' : 'Idle'}
+          </p>
+        </div>
       </div>
       <p className="min-h-6 text-sm">
         {floor ? `${floor.name} holds the floor${left == null ? '' : ` · ${left}s left`}` : 'Nobody is talking'}
@@ -97,6 +103,7 @@ function LineTile({ line, users, floor, history, left, caption }: { line: WallLi
         {countPhrase(counts.phones, 'phone')} · {countPhrase(counts.handsets, 'handset')}
       </a>
       {caption ? <p className="line-clamp-2 text-xs text-slate-600">{caption.speakerName}: {caption.transcript ?? caption.status}</p> : null}
+      {warning ? <p className="text-xs font-semibold text-amber-800">{warning}</p> : null}
     </article>
   )
 }

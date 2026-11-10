@@ -1,7 +1,9 @@
 import type { LineLang } from '../src/lib/lines.ts'
 import { translatePlan } from '../src/lib/server-caption.ts'
+import type { VoiceChoice } from '../src/lib/voice-choice.ts'
 import type { Config } from './config.ts'
 import type { ConsoleSettings } from './console-settings.ts'
+import { recognizeForLine } from './line-voice.ts'
 import { publicScribeError } from './scribe-session.ts'
 
 export type CaptionResult = {
@@ -9,6 +11,7 @@ export type CaptionResult = {
   translation: string | null
   translationNote: string | null
   status: 'ready' | 'unconfigured' | 'failed'
+  voiceWarning: string | null
 }
 
 export async function processRadioClip(input: {
@@ -17,15 +20,17 @@ export async function processRadioClip(input: {
   target: LineLang
   settings: ConsoleSettings
   config: Config
+  asrProvider?: VoiceChoice
+  elevenLabsKey?: string | null
   scribe?: (apiKey: string, wav: Buffer, language: string) => Promise<string>
 }): Promise<CaptionResult> {
   const heard = await recognize(input)
   if (!heard.transcript) {
-    return { transcript: null, translation: null, translationNote: heard.note, status: heard.status }
+    return { transcript: null, translation: null, translationNote: heard.note, status: heard.status, voiceWarning: heard.warning }
   }
   const plan = translatePlan(input.source, input.target, input.settings.translateProvider === 'opus')
   if (plan.action === 'skip') {
-    return { transcript: heard.transcript, translation: null, translationNote: plan.note, status: 'ready' }
+    return { transcript: heard.transcript, translation: null, translationNote: plan.note, status: 'ready', voiceWarning: heard.warning }
   }
   try {
     const runtime = await import('./local-runtime.ts')
@@ -37,12 +42,12 @@ export async function processRadioClip(input: {
       cacheDir: input.config.modelDir,
     })
     if ('error' in translated) {
-      return { transcript: heard.transcript, translation: null, translationNote: translated.message, status: 'ready' }
+      return { transcript: heard.transcript, translation: null, translationNote: translated.message, status: 'ready', voiceWarning: heard.warning }
     }
-    return { transcript: heard.transcript, translation: translated.text, translationNote: 'Translated on the server.', status: 'ready' }
+    return { transcript: heard.transcript, translation: translated.text, translationNote: 'Translated on the server.', status: 'ready', voiceWarning: heard.warning }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Translation failed'
-    return { transcript: heard.transcript, translation: null, translationNote: message.slice(0, 180), status: 'ready' }
+    return { transcript: heard.transcript, translation: null, translationNote: message.slice(0, 180), status: 'ready', voiceWarning: heard.warning }
   }
 }
 
@@ -51,20 +56,31 @@ async function recognize(input: {
   source: LineLang
   settings: ConsoleSettings
   config: Config
+  asrProvider?: VoiceChoice
+  elevenLabsKey?: string | null
   scribe?: (apiKey: string, wav: Buffer, language: string) => Promise<string>
-}): Promise<{ transcript: string | null; note: string | null; status: 'ready' | 'unconfigured' | 'failed' }> {
-  const primary = await primaryTranscript(input)
-  if (primary.transcript) return { transcript: primary.transcript, note: null, status: 'ready' }
-  if (input.settings.elevenLabsFallback && input.settings.elevenLabsApiKey && input.scribe) {
+}): Promise<{ transcript: string | null; note: string | null; status: 'ready' | 'unconfigured' | 'failed'; warning: string | null }> {
+  const choice = input.asrProvider === 'elevenlabs' ? 'elevenlabs' : 'free'
+  const heard = await recognizeForLine({
+    choice,
+    apiKey: input.elevenLabsKey ?? null,
+    wav: input.wav,
+    language: input.source,
+    scribe: input.scribe,
+    local: () => primaryTranscript(input),
+  })
+  if (heard.transcript || choice === 'elevenlabs') return heard
+  const key = input.elevenLabsKey ?? null
+  if (input.settings.elevenLabsFallback && key && input.scribe) {
     try {
-      const text = (await input.scribe(input.settings.elevenLabsApiKey, input.wav, input.source)).trim()
-      if (text) return { transcript: text, note: 'Transcribed by Scribe after the local recognizer failed.', status: 'ready' }
+      const text = (await input.scribe(key, input.wav, input.source)).trim()
+      if (text) return { transcript: text, note: 'Transcribed by Scribe after the local recognizer failed.', status: 'ready', warning: null }
     } catch (error) {
-      const failure = publicScribeError(error, input.settings.elevenLabsApiKey)
-      return { transcript: null, note: failure.message, status: 'failed' }
+      const failure = publicScribeError(error, key)
+      return { transcript: null, note: failure.message, status: 'failed', warning: null }
     }
   }
-  return primary
+  return heard
 }
 
 async function primaryTranscript(input: {

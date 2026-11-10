@@ -40,6 +40,9 @@ import { ConsoleSettingsStore, defaultConsoleSettings } from './console-settings
 import { DemoGate, clearDemoCookie, codesMatch, demoCookie, readCookie } from './demo-access.ts'
 import { isAdminApi, surfaceFromHeaders } from '../src/lib/host-surface.ts'
 import { lineTopic } from '../src/lib/lines.ts'
+import { KEY_MISSING } from '../src/lib/voice-choice.ts'
+import { speakElevenLabs, testElevenLabsKey } from './elevenlabs-voice.ts'
+import { speakForLine } from './line-voice.ts'
 import { DeviceStore } from './devices.ts'
 import { LinesStore } from './lines-store.ts'
 import { processRadioClip } from './radio-processor.ts'
@@ -89,12 +92,30 @@ export function createApp(options: AppOptions = {}) {
     if (options.scribe) return options.scribe
     return liveScribe(apiKey)
   }
-  const tts = createTts(config)
+  const baseTts = createTts(config)
+  let voiceLines: LinesStore | null = null
+  let voiceMonitor: RadioMonitor | null = null
+  const fetchVoice = (options.fetchImpl ?? fetch) as typeof fetch
+  const tts = {
+    status: () => baseTts.status(),
+    async speak(text: string, channel?: string) {
+      const line = channel ? voiceLines?.get(channel) : null
+      const spoken = await speakForLine({
+        choice: line?.ttsProvider ?? 'free',
+        apiKey: config.elevenLabsApiKey,
+        text,
+        eleven: (apiKey, value) => speakElevenLabs(apiKey, value, fetchVoice),
+        free: (value) => baseTts.speak(value),
+      })
+      if (spoken.warning && channel) voiceMonitor?.note(channel, spoken.warning)
+      return spoken.pcm
+    },
+  }
   const relay = new Relay()
   const assistant = new AssistantRuntime(relay, store, tts, now)
   const lines = new LinesStore(path.join(config.dataDir, 'console', 'lines.json'), () => new Date(now()).toISOString())
   const devices = new DeviceStore(path.join(config.dataDir, 'console', 'devices.json'), () => new Date(now()).toISOString())
-  const consoleSettings = new ConsoleSettingsStore(path.join(config.dataDir, 'console', 'settings.json'), defaultConsoleSettings(config))
+  const consoleSettings = new ConsoleSettingsStore(path.join(config.dataDir, 'console', 'settings.json'), defaultConsoleSettings(config), Boolean(config.elevenLabsApiKey))
   const radioLog = new RadioLog(path.join(config.dataDir, 'radio'))
   const captions = new CaptionQueue<ClosedClip>(async (clip) => {
     const id = randomUUID()
@@ -115,6 +136,8 @@ export function createApp(options: AppOptions = {}) {
       target: clip.line.targetLang,
       settings,
       config,
+      asrProvider: clip.line.asrProvider,
+      elevenLabsKey: config.elevenLabsApiKey,
       scribe: async (apiKey, wav, language) => gatewayFor(apiKey).convert(wav, language),
     })
     const saved = radioLog.finish(id, {
@@ -124,6 +147,7 @@ export function createApp(options: AppOptions = {}) {
       status: result.status,
     })
     radioLog.retain(settings.retentionDays, now())
+    if (result.voiceWarning) monitor.note(clip.line.id, result.voiceWarning)
     monitor.note(clip.line.id, `${clip.speakerName}: ${result.transcript ?? result.translationNote ?? 'no transcript'}`)
     relay.publish(
       `${lineTopic(clip.line.id)}caption`,
@@ -157,6 +181,8 @@ export function createApp(options: AppOptions = {}) {
   }
   relay.reserved = (id) => devices.reserved(id)
   relay.onLink = (id, online, listenOnly) => monitor.linkDevice(id, online, now(), listenOnly)
+  voiceLines = lines
+  voiceMonitor = monitor
   const sweepTimer = setInterval(() => monitor.sweep(now()), 400)
   const lookupImpl = options.lookupImpl
   const fetchImpl = options.fetchImpl
@@ -240,6 +266,10 @@ export function createApp(options: AppOptions = {}) {
       send,
       jsonBody,
       admin: (request, response) => allowAdmin(request, response),
+      testElevenLabs: async () => {
+        if (!config.elevenLabsApiKey) return { ok: false, message: KEY_MISSING }
+        return testElevenLabsKey(config.elevenLabsApiKey, fetchVoice)
+      },
     })) return
     const parts = url.pathname.split('/').filter(Boolean)
     if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/api/health')) {

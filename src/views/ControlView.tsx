@@ -1,7 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { controlPage, type ControlPage } from '@/lib/control-page'
+import type { VoiceChoice } from '@/lib/voice-choice'
 import { Connections } from '@/views/control/Connections'
 import { Dashboard } from '@/views/control/Dashboard'
+import { LineVoiceFields } from '@/views/control/LineVoiceFields'
 import QRCode from 'qrcode'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,7 +11,7 @@ import { controlFetch, saveControlToken } from '@/lib/control-api'
 import { formatIst } from '@/lib/ist'
 import type { LineLang } from '@/lib/lines'
 
-type Line = { id: string; name: string; enabled: boolean; sourceLang: LineLang; targetLang: LineLang; topic: string }
+type Line = { id: string; name: string; enabled: boolean; sourceLang: LineLang; targetLang: LineLang; ttsProvider: VoiceChoice; asrProvider: VoiceChoice; topic: string }
 type User = { lineId: string; id: string; name: string; lastSeen: number; location: string | null }
 type Floor = { lineId: string; id: string; name: string; since: number }
 type Activity = { at: string; lineId: string; text: string }
@@ -64,10 +66,9 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
   const [filterQ, setFilterQ] = useState('')
-  const [draft, setDraft] = useState({ id: '', name: '', sourceLang: 'te' as LineLang, targetLang: 'en' as LineLang })
+  const [draft, setDraft] = useState({ id: '', name: '', sourceLang: 'te' as LineLang, targetLang: 'en' as LineLang, ttsProvider: 'free' as VoiceChoice, asrProvider: 'free' as VoiceChoice })
   const [code, setCode] = useState('')
   const [token, setToken] = useState('')
-  const [keyDraft, setKeyDraft] = useState('')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
 
   async function loadAll() {
@@ -167,24 +168,27 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
     const response = await controlFetch('/api/control/lines', { method: 'POST', body: JSON.stringify(draft) })
     const body = (await response.json()) as { message?: string }
     setNote(response.ok ? 'Line created.' : (body.message ?? 'The line was not created.'))
-    if (response.ok) setDraft({ id: '', name: '', sourceLang: 'te', targetLang: 'en' })
+    if (response.ok) setDraft({ id: '', name: '', sourceLang: 'te', targetLang: 'en', ttsProvider: 'free', asrProvider: 'free' })
     await loadAll()
   }
 
   async function saveSettings(event: FormEvent) {
     event.preventDefault()
     if (!settings) return
-    const body: Record<string, unknown> = { ...settings }
-    if (keyDraft.trim()) body.elevenLabsApiKey = keyDraft.trim()
-    const response = await controlFetch('/api/control/settings', { method: 'PUT', body: JSON.stringify(body) })
+    const response = await controlFetch('/api/control/settings', { method: 'PUT', body: JSON.stringify(settings) })
     const payload = (await response.json()) as Settings & { message?: string }
     if (!response.ok) {
       setNote(payload.message ?? 'Settings were not saved.')
       return
     }
     setSettings(payload)
-    setKeyDraft('')
-    setNote(payload.elevenLabsConfigured ? 'Settings saved. A cloud key is stored on the server.' : 'Settings saved.')
+    setNote('Settings saved.')
+  }
+
+  async function testServerKey() {
+    const response = await controlFetch('/api/control/elevenlabs/test', { method: 'POST' })
+    const body = (await response.json()) as { ok?: boolean; message?: string }
+    setNote(body.ok ? 'Server ElevenLabs key is ok.' : (body.message ?? 'The server key was not accepted.'))
   }
 
   async function revokeDevice(id: string) {
@@ -256,16 +260,25 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
       ) : null}
       <section className="rounded-xl bg-white p-4">
         <h2 className="font-semibold">Lines</h2>
-        <form className="mt-3 grid gap-2 md:grid-cols-5" onSubmit={(event) => void createLine(event)}>
-          <Input placeholder="id" value={draft.id} onChange={(event) => setDraft({ ...draft, id: event.target.value })} required />
-          <Input placeholder="Name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required />
-          <LangSelect value={draft.sourceLang} onChange={(sourceLang) => setDraft({ ...draft, sourceLang })} />
-          <LangSelect value={draft.targetLang} onChange={(targetLang) => setDraft({ ...draft, targetLang })} />
-          <Button type="submit">Create line</Button>
+        <form className="mt-3 grid gap-3" onSubmit={(event) => void createLine(event)}>
+          <div className="grid gap-2 md:grid-cols-5">
+            <Input placeholder="id" value={draft.id} onChange={(event) => setDraft({ ...draft, id: event.target.value })} required />
+            <Input placeholder="Name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required />
+            <LangSelect value={draft.sourceLang} onChange={(sourceLang) => setDraft({ ...draft, sourceLang })} />
+            <LangSelect value={draft.targetLang} onChange={(targetLang) => setDraft({ ...draft, targetLang })} />
+            <Button type="submit">Create line</Button>
+          </div>
+          <LineVoiceFields
+            tts={draft.ttsProvider}
+            asr={draft.asrProvider}
+            configured={settings?.elevenLabsConfigured === true}
+            onTts={(ttsProvider) => setDraft({ ...draft, ttsProvider })}
+            onAsr={(asrProvider) => setDraft({ ...draft, asrProvider })}
+          />
         </form>
         <ul className="mt-4 flex flex-col gap-3">
           {lines.map((line) => (
-            <LineRow key={line.id} line={line} talkOrigin={talkOrigin} onChange={() => void loadAll()} onNote={setNote} onIssued={setIssued} />
+            <LineRow key={line.id} line={line} talkOrigin={talkOrigin} configured={settings?.elevenLabsConfigured === true} onChange={() => void loadAll()} onNote={setNote} onIssued={setIssued} />
           ))}
         </ul>
       </section>
@@ -346,7 +359,9 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
       {settings ? (
         <section className="rounded-xl bg-white p-4">
           <h2 className="font-semibold">Processing</h2>
-          <p className="mt-1 text-sm text-slate-600">These settings apply to every line. Phones cannot change them. Scribe is optional and only runs if the local recognizer fails.</p>
+          <p className="mt-1 text-sm text-slate-600">Speech and translation apply to every line. Each line picks Free or ElevenLabs above. The ElevenLabs key is only the server environment variable, and this page never asks for it.</p>
+          <p className="mt-2 text-sm">{settings.elevenLabsConfigured ? 'Server ElevenLabs key: configured.' : 'Server ElevenLabs key not configured.'}</p>
+          <Button type="button" variant="outline" className="mt-2" onClick={() => void testServerKey()}>Test server key</Button>
           <form className="mt-3 grid gap-3 md:grid-cols-2" onSubmit={(event) => void saveSettings(event)}>
             <label className="text-sm">Speech recognition
               <select className="mt-1 w-full rounded-md border px-2 py-2" value={settings.asrProvider} onChange={(event) => setSettings({ ...settings, asrProvider: event.target.value as Settings['asrProvider'] })}>
@@ -364,12 +379,9 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
             <label className="text-sm">Keep clips (days)
               <Input type="number" min={1} max={365} value={settings.retentionDays} onChange={(event) => setSettings({ ...settings, retentionDays: Number(event.target.value) })} />
             </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={settings.elevenLabsFallback} onChange={(event) => setSettings({ ...settings, elevenLabsFallback: event.target.checked })} />
-              If local recognition fails, send the clip to ElevenLabs Scribe. This can incur charges. Scribe does not translate.
-            </label>
-            <label className="text-sm md:col-span-2">Scribe key {settings.elevenLabsConfigured ? '(one is already stored)' : '(none stored)'}
-              <Input type="password" autoComplete="off" value={keyDraft} placeholder="Paste a new key to replace the stored one" onChange={(event) => setKeyDraft(event.target.value)} />
+            <label className="flex items-center gap-2 text-sm md:col-span-2">
+              <input type="checkbox" checked={settings.elevenLabsFallback} disabled={!settings.elevenLabsConfigured} onChange={(event) => setSettings({ ...settings, elevenLabsFallback: event.target.checked })} />
+              If local recognition fails on a Free line, try ElevenLabs Scribe with the server key. This can incur charges. Scribe does not translate.
             </label>
             <Button type="submit">Save processing</Button>
           </form>
@@ -389,7 +401,7 @@ function LangSelect({ value, onChange }: { value: LineLang; onChange: (value: Li
   )
 }
 
-function LineRow({ line, talkOrigin, onChange, onNote, onIssued }: { line: Line; talkOrigin: string | null; onChange: () => void; onNote: (value: string) => void; onIssued: (value: { name: string; id: string; token: string }) => void }) {
+function LineRow({ line, talkOrigin, configured, onChange, onNote, onIssued }: { line: Line; talkOrigin: string | null; configured: boolean; onChange: () => void; onNote: (value: string) => void; onIssued: (value: { name: string; id: string; token: string }) => void }) {
   const [name, setName] = useState(line.name)
   const [deviceName, setDeviceName] = useState('')
   const [qr, setQr] = useState('')
@@ -427,6 +439,13 @@ function LineRow({ line, talkOrigin, onChange, onNote, onIssued }: { line: Line;
           <Button type="button" variant="outline" onClick={() => void patch({ enabled: !line.enabled })}>{line.enabled ? 'Disable' : 'Enable'}</Button>
           <Button type="button" variant="outline" onClick={() => void controlFetch(`/api/control/lines/${line.id}`, { method: 'DELETE' }).then(() => onChange())}>Delete</Button>
         </div>
+        <LineVoiceFields
+          tts={line.ttsProvider ?? 'free'}
+          asr={line.asrProvider ?? 'free'}
+          configured={configured}
+          onTts={(ttsProvider) => void patch({ ttsProvider })}
+          onAsr={(asrProvider) => void patch({ asrProvider })}
+        />
         <form className="flex flex-wrap gap-2" onSubmit={(event) => void addDevice(event)}>
           <Input placeholder="Handset name" value={deviceName} onChange={(event) => setDeviceName(event.target.value)} required />
           <Button type="submit" variant="outline">Add device</Button>

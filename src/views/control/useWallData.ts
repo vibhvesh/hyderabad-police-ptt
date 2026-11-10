@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { controlFetch } from '@/lib/control-api'
 import { splitClients, talkSecondsLeft } from '@/lib/control-page'
+import type { VoiceChoice } from '@/lib/voice-choice'
 import type { LineLang } from '@/lib/lines'
 
-export type WallLine = { id: string; name: string; enabled: boolean; sourceLang: LineLang; targetLang: LineLang }
+export type WallLine = { id: string; name: string; enabled: boolean; sourceLang: LineLang; targetLang: LineLang; ttsProvider?: VoiceChoice; asrProvider?: VoiceChoice }
 export type WallUser = { lineId: string; id: string; name: string; lastSeen: number; location: string | null; kind?: 'phone' | 'handset'; battery?: number | null; rssi?: number | null }
 export type WallFloor = { lineId: string; id: string; name: string; since: number }
 export type WallActivity = { at: string; lineId: string; text: string }
