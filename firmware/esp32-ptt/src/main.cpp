@@ -1,4 +1,5 @@
 #include "audio_in.h"
+#include "board.h"
 #include "audio_out.h"
 #include "battery.h"
 #include "codec.h"
@@ -51,10 +52,16 @@ static void sendChunk(const int16_t *pcm, size_t n) {
 static void sendPresence() {
   if (!wsOnline() || !wsTimeReady()) return;
   BatteryReport bat = batteryRead();
-  char json[220];
-  snprintf(json, sizeof(json),
-           "{\"id\":\"%s\",\"name\":\"%s\",\"ts\":%llu,\"kind\":\"handset\",\"battery\":%d,\"voltage\":%.2f,\"rssi\":%d,\"charging\":false}",
-           selfId, cfg.name.c_str(), (unsigned long long)epochMs(), bat.percent, bat.voltage, wsRssi());
+  char json[240];
+  if (bat.percent >= 0) {
+    snprintf(json, sizeof(json),
+             "{\"id\":\"%s\",\"name\":\"%s\",\"ts\":%llu,\"kind\":\"handset\",\"battery\":%d,\"voltage\":%.2f,\"rssi\":%d,\"charging\":false}",
+             selfId, cfg.name.c_str(), (unsigned long long)epochMs(), bat.percent, bat.voltage, wsRssi());
+  } else {
+    snprintf(json, sizeof(json),
+             "{\"id\":\"%s\",\"name\":\"%s\",\"ts\":%llu,\"kind\":\"handset\",\"rssi\":%d}",
+             selfId, cfg.name.c_str(), (unsigned long long)epochMs(), wsRssi());
+  }
   char path[96];
   snprintf(path, sizeof(path), "presence/%s", selfId);
   char full[120];
@@ -97,6 +104,7 @@ void setup() {
   Serial.printf("Joining %s\n", cfg.ssid.c_str());
   jitterBegin();
   buttonBegin();
+  if (!boardAudioBegin()) Serial.println("Board audio did not start");
   if (!audioInBegin()) Serial.println("Mic did not start");
   if (!audioOutBegin()) Serial.println("Amp did not start");
   wsOnAudio(onAudio);
@@ -172,7 +180,7 @@ void loop() {
   }
   if (cfg.deepSleepIdle && !tx && jitterIdle() && !buttonDown() && now - idleSince > 15UL * 60UL * 1000UL) {
     Serial.println("Deep sleep until the button is pressed");
-    powerDeepSleep(PIN_PTT);
+    powerDeepSleep(boardProfile().buttonPin);
   }
   delay(5);
 }

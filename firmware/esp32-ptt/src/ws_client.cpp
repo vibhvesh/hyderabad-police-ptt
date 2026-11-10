@@ -1,7 +1,6 @@
 #include "ws_client.h"
 #include "ca_store.h"
 #include "codec.h"
-#include "pins.h"
 #include <ArduinoJson.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>

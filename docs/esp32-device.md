@@ -2,7 +2,7 @@
 
 A battery handset for the same lines as the phones. It plays every transmission on the line and has one button for push-to-talk. Speech recognition and translation stay on the server. The handset only sends and plays 12 kHz 16-bit PCM, the same packets the browser uses.
 
-Firmware lives in `firmware/esp32-ptt`. It is split into small modules: Wi-Fi setup, the WebSocket client, the mic, the speaker, the packet codec, the jitter buffer, the button, the floor lease, the battery reading, the LED, and power.
+Firmware lives in `firmware/esp32-ptt`. It is split into small modules: Wi-Fi setup, the WebSocket client, the mic, the speaker, the packet codec, the jitter buffer, the button, the floor lease, the battery reading, the LED, and power. The pins and the codec live in `src/boards/`. The rest of the firmware asks that module which board it is.
 
 This was checked with an emulated handset against the server. It has not been flashed onto a real board in this workspace.
 
@@ -98,19 +98,46 @@ Wi-Fi drops reconnect with a backoff from 1 second up to 30 seconds. A rejected 
 
 Every 5 seconds the handset publishes presence with battery percent, cell voltage, and Wi-Fi RSSI. The control room shows that next to the handset. The token is stored in flash and is not written to the serial log.
 
-## Flash
+## Board profiles
 
-Install [PlatformIO](https://platformio.org/), then:
+The handset code does not name a GPIO. `src/boards/profiles.cpp` holds one profile per kit: I2S pins, the codec and its I2C address, the speaker-enable pin, the button, the LED, and the battery divider. `src/boards/board_audio.cpp` starts I2S from that profile and, when the kit has one, writes the ES8388 or ES8311 setup over I2C. A Korvo-2 also starts the ES7210, because that board's microphones are not inside the ES8311.
+
+Pick the kit with the PlatformIO environment:
 
 ```sh
 cd firmware/esp32-ptt
-pio run -t upload
+pio run -e xiao_esp32s3_inmp441_max98357a
+pio run -e a1s_es8388
+pio run -e lyrat_v43_es8388
+pio run -e s3_korvo2_es8311
+```
+
+`pio run` with no `-e` builds the XIAO. `pio run -e a1s_es8388 -t upload` flashes that kit.
+
+| Env | Board | Codec | Notes |
+| --- | --- | --- | --- |
+| `xiao_esp32s3_inmp441_max98357a` | Seeed XIAO ESP32-S3 | none (INMP441 and MAX98357A) | Wiring table above. Battery on GPIO6. |
+| `a1s_es8388` | AI-Thinker ESP32-A1S / Audio Kit, ES8388 | ES8388 at I2C `0x10` | MCLK 0, BCLK 27, WS 25, DOUT 26, DIN 35, I2C 33/32, speaker enable GPIO21. KEY1 (GPIO36) is push-to-talk. Uses the 4 MB `huge_app` partition. |
+| `lyrat_v43_es8388` | ESP32-LyraT v4.3 | ES8388 at I2C `0x10` | MCLK 0, BCLK 5, WS 25, DOUT 26, DIN 35, I2C 18/23, speaker enable GPIO21. REC (GPIO36) is push-to-talk. Uses the 4 MB `huge_app` partition. |
+| `s3_korvo2_es8311` | ESP32-S3-Korvo-2 | ES8311 speaker, ES7210 mics | MCLK 16, BCLK 9, WS 45, DOUT 8, DIN 10, I2C 17/18, speaker enable GPIO48. BOOT (GPIO0) is push-to-talk. |
+
+The A1S and the LyraT use the same codec and a different pin map. That split is why the profile exists: a Boondock Echo kit can be added as another profile and another `[env:...]` block once its model is confirmed. Copy the closest profile, change the pins and the codec, and add `-DBOARD_...` in `platformio.ini`. No other file should need a GPIO change.
+
+These kits have no battery divider on a free ADC pin, so they report signal strength and leave battery blank. The XIAO build still reports the cell.
+
+## Flash
+
+Install [PlatformIO](https://platformio.org/), then, for the XIAO:
+
+```sh
+cd firmware/esp32-ptt
+pio run -e xiao_esp32s3_inmp441_max98357a -t upload
 pio device monitor
 ```
 
-The board target is `seeed_xiao_esp32s3` with octal PSRAM. Hold the boot button if the upload cannot find the chip. Serial is the USB connector, 115200.
+The XIAO target is `seeed_xiao_esp32s3` with octal PSRAM. Hold the boot button if the upload cannot find the chip. Serial is the USB connector, 115200. The A1S and the LyraT use the classic ESP32 serial port. The Korvo-2 build uses the S3 USB-UART at the same speed.
 
-To use the WS2812 on D4 instead of the onboard LED, set `USE_WS2812` to `1` in `include/pins.h` and build again.
+To use a WS2812 on the XIAO D4 pin instead of the onboard LED, set `ws2812Pin` to `5` and `ledPin` to `-1` in the XIAO profile, then build again.
 
 ## Provision
 

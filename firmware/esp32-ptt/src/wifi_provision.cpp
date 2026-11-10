@@ -1,4 +1,5 @@
 #include "wifi_provision.h"
+#include "board.h"
 #include "pins.h"
 #include <DNSServer.h>
 #include <WebServer.h>
@@ -36,12 +37,17 @@ static String page(const HandsetConfig &seed) {
 }
 
 bool provisionRequestedAtBoot() {
-  pinMode(PIN_PTT, INPUT_PULLUP);
+  const BoardProfile &board = boardProfile();
+  pinMode(board.buttonPin, board.buttonPullup ? INPUT_PULLUP : INPUT);
   delay(30);
-  if (digitalRead(PIN_PTT) != LOW) return false;
+  auto held = [&]() {
+    int level = digitalRead(board.buttonPin);
+    return board.buttonActiveLow ? level == LOW : level == HIGH;
+  };
+  if (!held()) return false;
   unsigned long start = millis();
   while (millis() - start < 3000) {
-    if (digitalRead(PIN_PTT) != LOW) return false;
+    if (!held()) return false;
     delay(20);
   }
   return true;

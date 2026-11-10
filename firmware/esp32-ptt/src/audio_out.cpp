@@ -1,16 +1,17 @@
 #include "audio_out.h"
+#include "board.h"
 #include "codec.h"
 #include "jitter.h"
 #include "pins.h"
 #include <Arduino.h>
-#include <driver/i2s_std.h>
 
-static i2s_chan_handle_t tx = nullptr;
 static TaskHandle_t taskHandle = nullptr;
 static volatile bool active = false;
 static RateState rate{};
 
 static void writeStereo(const int16_t *mono, size_t n) {
+  i2s_chan_handle_t tx = boardAmp();
+  if (!tx) return;
   int16_t stereo[512];
   size_t i = 0;
   while (i < n) {
@@ -30,7 +31,7 @@ static void task(void *) {
   int16_t block[480];
   int16_t up[640];
   for (;;) {
-    if (!tx || !active) {
+    if (!boardAmp() || !active) {
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
@@ -45,22 +46,11 @@ static void task(void *) {
 }
 
 bool audioOutBegin() {
-  i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
-  if (i2s_new_channel(&chan, &tx, nullptr) != ESP_OK) return false;
-  i2s_std_config_t cfg = {};
-  cfg.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_RATE_HZ);
-  cfg.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
-  cfg.gpio_cfg.mclk = I2S_GPIO_UNUSED;
-  cfg.gpio_cfg.bclk = (gpio_num_t)PIN_AMP_BCLK;
-  cfg.gpio_cfg.ws = (gpio_num_t)PIN_AMP_WS;
-  cfg.gpio_cfg.dout = (gpio_num_t)PIN_AMP_DIN;
-  cfg.gpio_cfg.din = I2S_GPIO_UNUSED;
-  if (i2s_channel_init_std_mode(tx, &cfg) != ESP_OK) return false;
-  if (i2s_channel_enable(tx) != ESP_OK) return false;
   xTaskCreatePinnedToCore(task, "amp", 6144, nullptr, 4, &taskHandle, 1);
-  return true;
+  return boardAmp() != nullptr;
 }
 
 void audioOutSetActive(bool on) {
   active = on;
+  boardSpeaker(on);
 }
