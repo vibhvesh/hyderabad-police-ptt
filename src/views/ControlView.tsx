@@ -10,6 +10,17 @@ type Line = { id: string; name: string; enabled: boolean; sourceLang: LineLang; 
 type User = { lineId: string; id: string; name: string; lastSeen: number; location: string | null }
 type Floor = { lineId: string; id: string; name: string; since: number }
 type Activity = { at: string; lineId: string; text: string }
+type Handset = {
+  id: string
+  lineId: string
+  name: string
+  revokedAt: string | null
+  online: boolean
+  lastSeen: number | null
+  battery: number | null
+  rssi: number | null
+  voltage: number | null
+}
 type Clip = {
   id: string
   lineId: string
@@ -37,6 +48,8 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
   const [note, setNote] = useState('')
   const [lines, setLines] = useState<Line[]>([])
   const [users, setUsers] = useState<User[]>([])
+  const [devices, setDevices] = useState<Handset[]>([])
+  const [issued, setIssued] = useState<{ name: string; id: string; token: string } | null>(null)
   const [floors, setFloors] = useState<Floor[]>([])
   const [activity, setActivity] = useState<Activity[]>([])
   const [clips, setClips] = useState<Clip[]>([])
@@ -65,10 +78,11 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
     }
     setAuthed(true)
     const lineBody = (await lineRes.json()) as { lines?: Line[] }
-    const liveBody = (await liveRes.json()) as { users?: User[]; floors?: Floor[]; activity?: Activity[] }
+    const liveBody = (await liveRes.json()) as { users?: User[]; floors?: Floor[]; activity?: Activity[]; devices?: Handset[] }
     const logBody = (await logRes.json()) as { clips?: Clip[] }
     setLines(lineBody.lines ?? [])
     setUsers(liveBody.users ?? [])
+    setDevices(liveBody.devices ?? [])
     setFloors(liveBody.floors ?? [])
     setActivity(liveBody.activity ?? [])
     setClips(logBody.clips ?? [])
@@ -81,8 +95,9 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
       setAuthed(false)
       return
     }
-    const liveBody = (await liveRes.json()) as { users?: User[]; floors?: Floor[]; activity?: Activity[] }
+    const liveBody = (await liveRes.json()) as { users?: User[]; floors?: Floor[]; activity?: Activity[]; devices?: Handset[] }
     setUsers(liveBody.users ?? [])
+    setDevices(liveBody.devices ?? [])
     setFloors(liveBody.floors ?? [])
     setActivity(liveBody.activity ?? [])
   }
@@ -161,6 +176,13 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
     setNote(payload.elevenLabsConfigured ? 'Settings saved. A cloud key is stored on the server.' : 'Settings saved.')
   }
 
+  async function revokeDevice(id: string) {
+    const response = await controlFetch(`/api/control/devices/${id}`, { method: 'DELETE' })
+    const body = (await response.json()) as { message?: string }
+    setNote(response.ok ? 'Handset revoked.' : (body.message ?? 'The handset was not revoked.'))
+    await loadAll()
+  }
+
   async function play(id: string) {
     const response = await controlFetch(`/api/control/clips/${id}/audio`)
     if (!response.ok) {
@@ -199,11 +221,20 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-[#0c3d82]">Control room</h1>
-          <p className="text-sm text-slate-600">Lines, live floor, and the server transcript log. Talking stays on the phone app.</p>
+          <p className="text-sm text-slate-600">Lines, live floor, handsets, and the server transcript log. Talking stays on the phone app and on enrolled handsets.</p>
         </div>
         <a className="rounded-full border px-3 py-1 text-sm font-semibold text-[#0c3d82]" href="#/reference">Reference review</a>
       </div>
       {note ? <p className="text-sm" role="status">{note}</p> : null}
+      {issued ? (
+        <section className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <h2 className="font-semibold">Handset token for {issued.name}</h2>
+          <p className="mt-1 text-sm text-slate-700">Type the id and the token into the handset setup page. The server stores only a hash, so this token is not shown again.</p>
+          <p className="mt-2 text-sm">Device id <span className="font-mono">{issued.id}</span></p>
+          <p className="mt-1 break-all font-mono text-sm">{issued.token}</p>
+          <Button type="button" variant="outline" className="mt-3" onClick={() => setIssued(null)}>Hide token</Button>
+        </section>
+      ) : null}
       <section className="rounded-xl bg-white p-4">
         <h2 className="font-semibold">Lines</h2>
         <form className="mt-3 grid gap-2 md:grid-cols-5" onSubmit={(event) => void createLine(event)}>
@@ -214,7 +245,9 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
           <Button type="submit">Create line</Button>
         </form>
         <ul className="mt-4 flex flex-col gap-3">
-          {lines.map((line) => <LineRow key={line.id} line={line} talkOrigin={talkOrigin} onChange={() => void loadAll()} onNote={setNote} />)}
+          {lines.map((line) => (
+            <LineRow key={line.id} line={line} talkOrigin={talkOrigin} onChange={() => void loadAll()} onNote={setNote} onIssued={setIssued} />
+          ))}
         </ul>
       </section>
       <section className="grid gap-4 lg:grid-cols-2">
@@ -241,6 +274,30 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
             {activity.map((item, index) => <li key={`${item.at}-${index}`} className="border-t py-1">{formatIst(item.at)} IST · {item.lineId} · {item.text}</li>)}
           </ul>
         </div>
+      </section>
+      <section className="rounded-xl bg-white p-4">
+        <h2 className="font-semibold">Handsets</h2>
+        <p className="mt-1 text-sm text-slate-600">A handset plays the line out loud and talks with one button. Add it on the line, then type the token into the setup page.</p>
+        <ul className="mt-3 text-sm">
+          {devices.length === 0 ? <li className="text-slate-500">No handsets yet.</li> : null}
+          {devices.map((device) => (
+            <li key={device.id} className="flex flex-wrap items-center justify-between gap-2 border-t py-2">
+              <span>
+                <span className="font-semibold">{device.name}</span> · {device.lineId} · {device.id}
+                <span className="block text-xs text-slate-500">
+                  {device.revokedAt ? 'Revoked' : device.online ? 'Online' : 'Offline'}
+                  {device.battery != null ? ` · battery ${device.battery}%` : ''}
+                  {device.voltage != null ? ` (${device.voltage} V)` : ''}
+                  {device.rssi != null ? ` · ${device.rssi} dBm` : ''}
+                  {device.lastSeen ? ` · last seen ${formatIst(new Date(device.lastSeen).toISOString())} IST` : ''}
+                </span>
+              </span>
+              {device.revokedAt ? null : (
+                <Button type="button" variant="outline" onClick={() => void revokeDevice(device.id)}>Revoke</Button>
+              )}
+            </li>
+          ))}
+        </ul>
       </section>
       <section className="rounded-xl bg-white p-4">
         <h2 className="font-semibold">Communication log</h2>
@@ -310,8 +367,9 @@ function LangSelect({ value, onChange }: { value: LineLang; onChange: (value: Li
   )
 }
 
-function LineRow({ line, talkOrigin, onChange, onNote }: { line: Line; talkOrigin: string | null; onChange: () => void; onNote: (value: string) => void }) {
+function LineRow({ line, talkOrigin, onChange, onNote, onIssued }: { line: Line; talkOrigin: string | null; onChange: () => void; onNote: (value: string) => void; onIssued: (value: { name: string; id: string; token: string }) => void }) {
   const [name, setName] = useState(line.name)
+  const [deviceName, setDeviceName] = useState('')
   const [qr, setQr] = useState('')
   const origin = talkOrigin || window.location.origin
   const link = `${origin}/#/?line=${line.id}`
@@ -324,6 +382,19 @@ function LineRow({ line, talkOrigin, onChange, onNote }: { line: Line; talkOrigi
     onNote(response.ok ? 'Line updated.' : (payload.message ?? 'The line was not updated.'))
     onChange()
   }
+  async function addDevice(event: FormEvent) {
+    event.preventDefault()
+    const response = await controlFetch(`/api/control/lines/${line.id}/devices`, { method: 'POST', body: JSON.stringify({ name: deviceName }) })
+    const body = (await response.json()) as { token?: string; name?: string; id?: string; message?: string }
+    if (!response.ok || !body.token || !body.id) {
+      onNote(body.message ?? 'The handset was not added.')
+      return
+    }
+    onIssued({ name: body.name ?? deviceName, id: body.id, token: body.token })
+    setDeviceName('')
+    onNote('Handset added. Copy the token now.')
+    onChange()
+  }
   return (
     <li className="grid gap-3 rounded-lg border p-3 md:grid-cols-[1fr_auto]">
       <div className="grid gap-2">
@@ -334,6 +405,10 @@ function LineRow({ line, talkOrigin, onChange, onNote }: { line: Line; talkOrigi
           <Button type="button" variant="outline" onClick={() => void patch({ enabled: !line.enabled })}>{line.enabled ? 'Disable' : 'Enable'}</Button>
           <Button type="button" variant="outline" onClick={() => void controlFetch(`/api/control/lines/${line.id}`, { method: 'DELETE' }).then(() => onChange())}>Delete</Button>
         </div>
+        <form className="flex flex-wrap gap-2" onSubmit={(event) => void addDevice(event)}>
+          <Input placeholder="Handset name" value={deviceName} onChange={(event) => setDeviceName(event.target.value)} required />
+          <Button type="submit" variant="outline">Add device</Button>
+        </form>
         <p className="break-all text-xs text-slate-500">{link}</p>
       </div>
       {qr ? <img src={qr} alt={`QR code to join ${line.name}`} className="h-28 w-28" /> : null}

@@ -14,6 +14,15 @@ export function sameSecret(expected: string, given: string): boolean {
   return timingSafeEqual(a, b)
 }
 
+/** Compare a stored sha256 hex digest to the hash of a secret, without keeping the secret. */
+export function hashMatches(storedHex: string, secret: string): boolean {
+  const given = sha256(secret)
+  const a = Buffer.from(storedHex)
+  const b = Buffer.from(given)
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
 export function sameHmac(expected: string, given: string): boolean {
   const a = Buffer.from(expected)
   const b = Buffer.from(given)

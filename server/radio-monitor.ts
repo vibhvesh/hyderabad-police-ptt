@@ -26,7 +26,25 @@ export type ClosedClip = {
   durationMs: number
 }
 
-export type LiveUser = { lineId: string; id: string; name: string; lastSeen: number; location: string | null }
+export type LiveUser = {
+  lineId: string
+  id: string
+  name: string
+  lastSeen: number
+  location: string | null
+  kind: 'phone' | 'handset'
+  battery: number | null
+  rssi: number | null
+}
+
+export type HandsetLive = {
+  online: boolean
+  lastSeen: number | null
+  battery: number | null
+  rssi: number | null
+  voltage: number | null
+  charging: boolean | null
+}
 export type LiveFloor = { lineId: string; id: string; name: string; since: number }
 export type LiveActivity = { at: string; lineId: string; text: string }
 
@@ -34,6 +52,7 @@ export class RadioMonitor {
   private open = new Map<string, OpenSpeaker>()
   private users = new Map<string, LiveUser>()
   private floors = new Map<string, LiveFloor>()
+  private handsets = new Map<string, HandsetLive>()
   private feed: LiveActivity[] = []
   private lines: LinesStore
   private onClip: (clip: ClosedClip) => void
@@ -92,6 +111,15 @@ export class RadioMonitor {
     this.feed = [{ at, lineId, text }, ...this.feed].slice(0, 40)
   }
 
+  linkDevice(id: string, online: boolean, now: number) {
+    const current = this.handsets.get(id) ?? emptyHandset()
+    this.handsets.set(id, { ...current, online, lastSeen: now })
+  }
+
+  handset(id: string): HandsetLive {
+    return this.handsets.get(id) ?? emptyHandset()
+  }
+
   private start(line: LineRecord, speakerId: string, now: number): OpenSpeaker {
     const known = this.users.get(`${line.id}:${speakerId}`)
     return {
@@ -128,10 +156,33 @@ export class RadioMonitor {
       return
     }
     try {
-      const body = JSON.parse(new TextDecoder().decode(payload)) as { name?: unknown; loc?: unknown }
+      const body = JSON.parse(new TextDecoder().decode(payload)) as { name?: unknown; loc?: unknown; kind?: unknown; battery?: unknown; rssi?: unknown; voltage?: unknown; charging?: unknown }
       const name = String(body.name ?? id).slice(0, 40)
       const location = formatLoc(clean(body.loc))
-      this.users.set(key, { lineId: line.id, id, name, lastSeen: now, location: location === 'Location unavailable' ? null : location })
+      const battery = bounded(body.battery, 0, 100)
+      const rssi = bounded(body.rssi, -120, 0)
+      const kind = body.kind === 'handset' ? 'handset' : 'phone'
+      this.users.set(key, {
+        lineId: line.id,
+        id,
+        name,
+        lastSeen: now,
+        location: location === 'Location unavailable' ? null : location,
+        kind,
+        battery,
+        rssi,
+      })
+      if (kind === 'handset') {
+        const current = this.handsets.get(id) ?? emptyHandset()
+        this.handsets.set(id, {
+          ...current,
+          lastSeen: now,
+          battery,
+          rssi,
+          voltage: bounded(body.voltage, 2.5, 5),
+          charging: typeof body.charging === 'boolean' ? body.charging : current.charging,
+        })
+      }
       this.note(line.id, `${name} is online`)
     } catch {
       /* ignore malformed presence */
@@ -152,6 +203,16 @@ export class RadioMonitor {
       /* ignore malformed floor */
     }
   }
+}
+
+function emptyHandset(): HandsetLive {
+  return { online: false, lastSeen: null, battery: null, rssi: null, voltage: null, charging: null }
+}
+
+function bounded(value: unknown, min: number, max: number): number | null {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n) || n < min || n > max) return null
+  return Math.round(n * 100) / 100
 }
 
 function clean(value: unknown): { lat: number; lon: number; acc: number | null } | null {

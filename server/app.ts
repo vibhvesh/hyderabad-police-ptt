@@ -40,6 +40,7 @@ import { ConsoleSettingsStore, defaultConsoleSettings } from './console-settings
 import { DemoGate, clearDemoCookie, codesMatch, demoCookie, readCookie } from './demo-access.ts'
 import { isAdminApi, surfaceFromHeaders } from '../src/lib/host-surface.ts'
 import { lineTopic } from '../src/lib/lines.ts'
+import { DeviceStore } from './devices.ts'
 import { LinesStore } from './lines-store.ts'
 import { processRadioClip } from './radio-processor.ts'
 import { RadioLog } from './radio-log.ts'
@@ -92,6 +93,7 @@ export function createApp(options: AppOptions = {}) {
   const relay = new Relay()
   const assistant = new AssistantRuntime(relay, store, tts, now)
   const lines = new LinesStore(path.join(config.dataDir, 'console', 'lines.json'), () => new Date(now()).toISOString())
+  const devices = new DeviceStore(path.join(config.dataDir, 'console', 'devices.json'), () => new Date(now()).toISOString())
   const consoleSettings = new ConsoleSettingsStore(path.join(config.dataDir, 'console', 'settings.json'), defaultConsoleSettings(config))
   const radioLog = new RadioLog(path.join(config.dataDir, 'radio'))
   const captions = new CaptionQueue<ClosedClip>(async (clip) => {
@@ -140,6 +142,21 @@ export function createApp(options: AppOptions = {}) {
   })
   const monitor = new RadioMonitor(lines, (clip) => captions.enqueue(clip))
   relay.tap = (topic, payload) => monitor.ingest(topic, payload, now())
+  relay.authenticate = (id, token) => {
+    const found = devices.verify(id, token)
+    if (!found) return null
+    const line = lines.get(found.lineId)
+    if (!line || !line.enabled) return null
+    return found
+  }
+  relay.stillAllowed = (id) => {
+    if (!devices.active(id)) return false
+    const found = devices.list().find((item) => item.id === id)
+    const line = found ? lines.get(found.lineId) : null
+    return !!line && line.enabled
+  }
+  relay.reserved = (id) => devices.reserved(id)
+  relay.onLink = (id, online) => monitor.linkDevice(id, online, now())
   const sweepTimer = setInterval(() => monitor.sweep(now()), 400)
   const lookupImpl = options.lookupImpl
   const fetchImpl = options.fetchImpl
@@ -213,9 +230,11 @@ export function createApp(options: AppOptions = {}) {
     }
     if (await handleControl(req, res, {
       lines,
+      devices,
       settings: consoleSettings,
       log: radioLog,
       monitor,
+      relay,
       now,
       talkOrigin: config.publicHost ? `https://${config.publicHost}` : null,
       send,

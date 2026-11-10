@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="520" viewBox="0 0 920 520">
+  <rect width="920" height="520" fill="#f7f4ee"/>
+  <text x="24" y="36" font-family="sans-serif" font-size="20" fill="#0c3d82">Sanket handset wiring</text>
+  <g font-family="sans-serif" font-size="13" fill="#1c1917">
+    <rect x="340" y="70" width="220" height="360" rx="8" fill="#fff" stroke="#0c3d82"/>
+    <text x="360" y="98" font-weight="700">XIAO ESP32-S3</text>
+    <text x="360" y="130">D0 GPIO1  PTT</text>
+    <text x="360" y="154">D1 GPIO2  amp BCLK</text>
+    <text x="360" y="178">D2 GPIO3  amp LRC</text>
+    <text x="360" y="202">D3 GPIO4  amp DIN</text>
+    <text x="360" y="226">D4 GPIO5  WS2812</text>
+    <text x="360" y="250">D5 GPIO6  battery</text>
+    <text x="360" y="274">D8 GPIO7  mic BCLK</text>
+    <text x="360" y="298">D9 GPIO8  mic WS</text>
+    <text x="360" y="322">D10 GPIO9 mic SD</text>
+    <text x="360" y="346">GPIO21 onboard LED</text>
+    <text x="360" y="370">3V3 and GND</text>
+    <text x="360" y="394">5V from charger</text>
+    <rect x="40" y="80" width="240" height="150" rx="8" fill="#fff" stroke="#444"/>
+    <text x="56" y="108" font-weight="700">INMP441 mic</text>
+    <text x="56" y="132">SCK to D8, WS to D9</text>
+    <text x="56" y="156">SD to D10, L/R to GND</text>
+    <text x="56" y="180">VDD 3V3, GND to GND</text>
+    <rect x="40" y="260" width="240" height="150" rx="8" fill="#fff" stroke="#444"/>
+    <text x="56" y="288" font-weight="700">MAX98357A and speaker</text>
+    <text x="56" y="312">BCLK D1, LRC D2, DIN D3</text>
+    <text x="56" y="336">VIN 3V3, GND, SD to VIN</text>
+    <text x="56" y="360">speaker on + and -</text>
+    <rect x="620" y="80" width="270" height="200" rx="8" fill="#fff" stroke="#444"/>
+    <text x="636" y="108" font-weight="700">LiPo, TP4056, button</text>
+    <text x="636" y="132">Cell to TP4056 BAT</text>
+    <text x="636" y="156">OUT+ diode to XIAO 5V</text>
+    <text x="636" y="180">100k / 100k to GPIO6</text>
+    <text x="636" y="204">Button from D0 to GND</text>
+    <text x="636" y="228">Do not use the XIAO BAT pad</text>
+    <rect x="620" y="310" width="270" height="120" rx="8" fill="#fff" stroke="#444"/>
+    <text x="636" y="338" font-weight="700">Optional WS2812</text>
+    <text x="636" y="362">DIN to D4 through 330 ohm</text>
+    <text x="636" y="386">5V and GND. Set USE_WS2812</text>
+  </g>
+</svg>

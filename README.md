@@ -19,12 +19,13 @@ The talk hostname serves the Talk page, `/api/lines`, `/health`, and `/ws`. Cont
 Sign in with `ADMIN_TOKEN` or the shared demo code. From the console you can:
 
 - Create, rename, enable, disable, and delete lines. Each line has a join link and a QR code that opens Talk on that line.
+- Add a handset to a line. The token is shown once. The server stores only its hash. Revoke it from the same screen. Battery, signal, and online state show on the handset row. See [docs/esp32-device.md](docs/esp32-device.md).
 - Watch who is online, the current floor, and a short activity feed.
 - Read the communication log in India Standard Time, filter it, play the stored clip, and export CSV or TXT.
 - Choose the speech recognizer, English/Hindi translation, clip retention, and an optional ElevenLabs Scribe key. The key is stored in `DATA_DIR` and is not returned to the browser. Scribe runs only after local recognition fails, and it does not translate. Telugu text is kept as spoken and is not guessed into another language.
 - Open the Reference review screen.
 
-Lines and settings are files under `DATA_DIR` (`console/lines.json`, `console/settings.json`). Clips and audio are under `DATA_DIR/radio`. The default retention is 14 days.
+Lines, settings, and handset records are files under `DATA_DIR` (`console/lines.json`, `console/settings.json`, `console/devices.json`). A handset record stores a hash of the token, not the token. Clips and audio are under `DATA_DIR/radio`. The default retention is 14 days. Handset audio uses the same 12 kHz packets as a phone, so the server log and the transcript path are the same.
 
 Self-hosted rebuild, with the process listening on port 8010 for the tunnel:
 

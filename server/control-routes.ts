@@ -1,15 +1,19 @@
 import type http from 'node:http'
 import { lineId, lineTopic } from '../src/lib/lines.ts'
 import type { ConsoleSettingsStore } from './console-settings.ts'
+import type { DeviceStore } from './devices.ts'
 import type { LinesStore } from './lines-store.ts'
 import type { RadioLog, ClipQuery } from './radio-log.ts'
 import type { RadioMonitor } from './radio-monitor.ts'
+import type { Relay } from './relay.ts'
 
 type Deps = {
   lines: LinesStore
+  devices: DeviceStore
   settings: ConsoleSettingsStore
   log: RadioLog
   monitor: RadioMonitor
+  relay: Relay
   now: () => number
   talkOrigin: string | null
   send: (res: http.ServerResponse, status: number, body: unknown) => void
@@ -24,7 +28,11 @@ export async function handleControl(req: http.IncomingMessage, res: http.ServerR
   const parts = url.pathname.split('/').filter(Boolean)
   if (req.method === 'GET' && url.pathname === '/api/control/live') {
     deps.monitor.sweep(deps.now())
-    deps.send(res, 200, { ...deps.monitor.snapshot(deps.now()), talkOrigin: deps.talkOrigin })
+    deps.send(res, 200, { ...deps.monitor.snapshot(deps.now()), devices: deviceViews(deps), talkOrigin: deps.talkOrigin })
+    return true
+  }
+  if (req.method === 'GET' && url.pathname === '/api/control/devices') {
+    deps.send(res, 200, { devices: deviceViews(deps) })
     return true
   }
   if (req.method === 'GET' && url.pathname === '/api/control/lines') {
@@ -70,9 +78,36 @@ export async function handleControl(req: http.IncomingMessage, res: http.ServerR
         deps.send(res, 404, { error: 'line', message: removed.error })
         return true
       }
+      for (const deviceId of deps.devices.revokeLine(id)) deps.relay.dropDevice(deviceId)
       deps.send(res, 200, { ok: true })
       return true
     }
+  }
+  if (parts[0] === 'api' && parts[1] === 'control' && parts[2] === 'lines' && parts[3] && parts[4] === 'devices' && !parts[5] && req.method === 'POST') {
+    const id = lineId(parts[3])
+    if (!id || !deps.lines.get(id)) {
+      deps.send(res, 404, { error: 'line', message: 'No such line.' })
+      return true
+    }
+    const body = await deps.jsonBody(req, res, 8_192)
+    if (!body) return true
+    const created = deps.devices.create(id, String(body.name ?? ''))
+    if ('error' in created) {
+      deps.send(res, 400, { error: 'device', message: created.error })
+      return true
+    }
+    deps.send(res, 201, { ...created.device, token: created.token })
+    return true
+  }
+  if (parts[0] === 'api' && parts[1] === 'control' && parts[2] === 'devices' && parts[3] && !parts[4] && req.method === 'DELETE') {
+    const removed = deps.devices.revoke(parts[3])
+    if ('error' in removed) {
+      deps.send(res, 404, { error: 'device', message: removed.error })
+      return true
+    }
+    deps.relay.dropDevice(parts[3])
+    deps.send(res, 200, { ok: true })
+    return true
   }
   if (url.pathname === '/api/control/settings' && req.method === 'GET') {
     deps.send(res, 200, deps.settings.view())
@@ -115,6 +150,10 @@ export async function handleControl(req: http.IncomingMessage, res: http.ServerR
   }
   deps.send(res, 404, { error: 'not_found', message: 'No such control route.' })
   return true
+}
+
+function deviceViews(deps: Deps) {
+  return deps.devices.list().map((device) => ({ ...device, ...deps.monitor.handset(device.id) }))
 }
 
 function viewLine(line: { id: string; name: string; enabled: boolean; sourceLang: string; targetLang: string }) {
