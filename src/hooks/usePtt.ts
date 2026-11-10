@@ -105,6 +105,7 @@ export function usePtt() {
   const liveRef = useRef(false)
   const tailUntilRef = useRef(0)
   const txRef = useRef<OpenClip | null>(null)
+  const txStartRef = useRef<number | null>(null)
   const rxRef = useRef<OpenClip | null>(null)
   const lastRxRef = useRef(0)
   const ringRef = useRef(new PcmRing(Math.round((PRE_ROLL_MS / 1000) * SAMPLE_RATE)))
@@ -192,6 +193,7 @@ export function usePtt() {
   function finishTx() {
     const clip = txRef.current
     txRef.current = null
+    txStartRef.current = null
     if (clip) publishClip(clip)
   }
 
@@ -371,6 +373,7 @@ export function usePtt() {
       grantedRef.current = true
       setGranted(true)
       setDenied(false)
+      txStartRef.current = Date.now()
       beginTx()
       const pre = ringRef.current.snapshot()
       ringRef.current.clear()
@@ -560,6 +563,9 @@ export function usePtt() {
 
   const talker = floor && floor.id !== me ? floor.name : null
   const talkerId = floor && floor.id !== me ? floor.id : null
+  const holdLeft = granted && txStartRef.current != null
+    ? Math.max(0, Math.ceil((MAX_CLIP_MS - (Date.now() - txStartRef.current)) / 1000))
+    : null
 
   function setName(value: string) {
     const next = value.slice(0, 40)
@@ -598,6 +604,7 @@ export function usePtt() {
     me,
     talker,
     talkerId,
+    holdLeft,
     messages,
     logEpoch,
     clearMessages,

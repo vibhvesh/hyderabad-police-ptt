@@ -146,7 +146,11 @@ export class Radio {
   }
 
   private tick() {
-    const now = Date.now()
+    this.pulse(Date.now())
+  }
+
+  /** Renews our own floor lease. The server relay does not echo a publisher's frame, so seen cannot depend on that echo. */
+  pulse(now: number) {
     if (this.name && (!this.lastBeat || now - this.lastBeat >= PRESENCE_BEAT_MS)) this.beat()
     let changed = false
     for (const [id, user] of this.users) {
@@ -155,8 +159,11 @@ export class Radio {
       changed = true
       if (this.floor?.id === id) this.setFloor(null)
     }
+    if (this.talking && this.floor?.id === this.id) {
+      this.floor = { ...this.floor, seen: now }
+      this.publishFloor('hb', this.floor.ts)
+    }
     if (this.floor && now - this.floor.seen > FLOOR_TIMEOUT_MS) this.setFloor(null)
-    if (this.talking && this.floor?.id === this.id) this.publishFloor('hb', this.floor.ts)
     if (this.talking && this.floor?.id !== this.id) {
       this.talking = false
       this.handlers.lost()

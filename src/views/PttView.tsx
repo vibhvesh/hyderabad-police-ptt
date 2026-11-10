@@ -5,13 +5,14 @@ import { Button } from '@/components/ui/button'
 import { usePtt, type Phase } from '@/hooks/usePtt'
 import { forwardMessage } from '@/lib/api'
 import { CHANNEL_LABEL } from '@/lib/constants'
+import { shouldEndHold } from '@/lib/hold'
 import { formatLoc } from '@/lib/format'
 import { PHASE_CLASS, PHASE_LABEL } from '@/lib/phase'
 import { cn } from '@/lib/utils'
 
-function detailFor(phase: Phase, talker: string | null, netDetail: string) {
+function detailFor(phase: Phase, talker: string | null, netDetail: string, holdLeft: number | null) {
   if (phase === 'offline') return netDetail
-  if (phase === 'talking') return 'You are transmitting'
+  if (phase === 'talking') return holdLeft == null ? 'You are transmitting' : `You are transmitting · ${holdLeft}s left`
   if (phase === 'claiming') return 'Asking for the channel'
   if (phase === 'receiving') return `${talker ?? 'Someone'} is talking`
   if (phase === 'busy') return talker ? `Channel taken by ${talker}` : 'Channel taken'
@@ -37,19 +38,28 @@ export function PttView() {
           aria-label={label}
           onPointerDown={(event) => {
             event.preventDefault()
-            event.currentTarget.setPointerCapture(event.pointerId)
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId)
+            } catch {
+              /* capture is optional; the hold still starts */
+            }
             void ptt.down()
           }}
           onPointerUp={(event) => {
             event.preventDefault()
-            ptt.up()
+            if (shouldEndHold('pointerup')) ptt.up()
           }}
-          onPointerCancel={() => ptt.up()}
+          onTouchEnd={(event) => {
+            event.preventDefault()
+            if (shouldEndHold('touchend')) ptt.up()
+          }}
+          onPointerCancel={(event) => event.preventDefault()}
+          onPointerLeave={() => undefined}
           onContextMenu={(event) => event.preventDefault()}
         >
           {label}
         </button>
-        <p className="text-center text-sm font-medium" aria-live="polite">{detailFor(ptt.phase, ptt.talker, ptt.net.detail)}</p>
+        <p className="text-center text-sm font-medium" aria-live="polite">{detailFor(ptt.phase, ptt.talker, ptt.net.detail, ptt.holdLeft)}</p>
         <p className="text-center text-xs text-slate-500">Hold the button, or hold Space. One speaker at a time.</p>
         {ptt.micError ? <p className="text-center text-sm text-red-700">{ptt.micError}</p> : null}
         <label className="w-full text-sm">Line
