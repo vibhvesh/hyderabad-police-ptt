@@ -63,11 +63,19 @@ const EMPTY_RADIO: RadioView = { users: [], floor: null, me: '', online: false }
 
 type PublicLine = { id: string; name: string; topic: string }
 
+const LINE_STORE = 'sanket-talk-line'
+
 function hashLine(): string {
   const hash = window.location.hash
   const query = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : ''
   const id = new URLSearchParams(query).get('line') ?? ''
-  return validLineId(id) ?? ''
+  const fromHash = validLineId(id)
+  if (fromHash) return fromHash
+  try {
+    return validLineId(localStorage.getItem(LINE_STORE) ?? '') ?? ''
+  } catch {
+    return ''
+  }
 }
 
 export function usePtt() {
@@ -410,7 +418,15 @@ export function usePtt() {
         if (cancel) return
         const list = body.lines ?? []
         setLines(list)
-        setLineId((current) => current || list[0]?.id || 'sanket-1')
+        setLineId((current) => {
+          const next = current || list[0]?.id || 'sanket-1'
+          try {
+            if (next) localStorage.setItem(LINE_STORE, next)
+          } catch {
+            /* private mode */
+          }
+          return next
+        })
       })
       .catch(() => setLineId((current) => current || 'sanket-1'))
     const onHash = () => {
@@ -582,6 +598,11 @@ export function usePtt() {
   function chooseLine(id: string) {
     const next = validLineId(id)
     if (!next) return
+    try {
+      localStorage.setItem(LINE_STORE, next)
+    } catch {
+      /* private mode */
+    }
     setLineId(next)
     const base = window.location.hash.startsWith('#/transcribe') || window.location.hash.startsWith('#/reference') || window.location.hash.startsWith('#/control')
       ? '#/'

@@ -1,4 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { controlPage, type ControlPage } from '@/lib/control-page'
+import { Connections } from '@/views/control/Connections'
+import { Dashboard } from '@/views/control/Dashboard'
 import QRCode from 'qrcode'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,6 +48,7 @@ type Settings = {
 const LANGS: LineLang[] = ['te', 'en', 'hi']
 
 export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
+  const [page, setPage] = useState<ControlPage>(() => controlPage(window.location.hash))
   const [authed, setAuthed] = useState<boolean | null>(null)
   const [note, setNote] = useState('')
   const [lines, setLines] = useState<Line[]>([])
@@ -126,6 +130,12 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
     if (filterQ) params.set('q', filterQ)
     return params.toString()
   }
+
+  useEffect(() => {
+    const sync = () => setPage(controlPage(window.location.hash))
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
 
   useEffect(() => {
     void loadAll()
@@ -218,13 +228,21 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
   }
 
   return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <nav className="flex flex-wrap gap-2 px-5 pt-4 text-sm" aria-label="Control room">
+        <a className={page.name === 'dashboard' ? 'rounded-full bg-[#0c3d82] px-3 py-1 font-semibold text-white' : 'rounded-full border px-3 py-1 font-semibold text-[#0c3d82]'} href="#/control">Wall</a>
+        <a className={page.name === 'manage' ? 'rounded-full bg-[#0c3d82] px-3 py-1 font-semibold text-white' : 'rounded-full border px-3 py-1 font-semibold text-[#0c3d82]'} href="#/control/manage">Settings</a>
+        <a className="rounded-full border px-3 py-1 font-semibold text-[#0c3d82]" href="#/reference">Reference</a>
+      </nav>
+      {page.name === 'dashboard' ? <Dashboard /> : null}
+      {page.name === 'connections' ? <Connections lineId={page.lineId} /> : null}
+      {page.name === 'manage' ? (
     <main className="flex flex-col gap-6 px-4 py-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-[#0c3d82]">Control room</h1>
-          <p className="text-sm text-slate-600">Lines, live floor, handsets, and the server transcript log. Talking stays on the phone app and on enrolled handsets.</p>
+          <h1 className="text-xl font-semibold text-[#0c3d82]">Settings</h1>
+          <p className="text-sm text-slate-600">Lines, handsets, the transcript log, and processing. The wall stays the first screen.</p>
         </div>
-        <a className="rounded-full border px-3 py-1 text-sm font-semibold text-[#0c3d82]" href="#/reference">Reference review</a>
       </div>
       {note ? <p className="text-sm" role="status">{note}</p> : null}
       {issued ? (
@@ -358,6 +376,8 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
         </section>
       ) : null}
     </main>
+      ) : null}
+    </div>
   )
 }
 

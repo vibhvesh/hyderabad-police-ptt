@@ -44,14 +44,14 @@ export default function App() {
   }, [showControl, showTranscribe, showReference])
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col">
+    <div className={showControl ? 'flex min-h-dvh w-full flex-col' : 'mx-auto flex min-h-dvh w-full max-w-5xl flex-col'}>
       <header className="sticky top-0 z-10">
-        <div className="flex flex-wrap items-center gap-3 bg-[#0c3d82] px-4 py-3 text-white">
-          <div className="min-w-0 flex-1">
+        <div className="flex flex-col gap-2 bg-[#0c3d82] px-4 py-3 text-white sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+          <div className="min-w-0 sm:flex-1">
             <p className="text-base leading-tight font-bold tracking-wide">{showControl ? 'Control room' : showTranscribe ? TRANSCRIBE_PRODUCT : PRODUCT}</p>
-            <p className="text-xs text-blue-100">{showControl ? 'Lines, floor, and server transcripts' : 'Push-to-talk and transcription'}</p>
+            <p className="text-xs text-blue-100">{showControl ? 'Wall display' : 'Push to talk'}</p>
           </div>
-          <nav className="flex gap-2 text-sm" aria-label="Sections">
+          <nav className="flex flex-wrap gap-2 text-sm" aria-label="Sections">
             {surface !== 'admin' ? <NavLink href="#/" current={route === 'talk'}>Talk</NavLink> : null}
             {surface !== 'admin' ? <NavLink href="#/transcribe" current={route === 'transcribe'}>Transcribe</NavLink> : null}
             {surface !== 'talk' ? <NavLink href="#/control" current={showControl}>Control</NavLink> : null}
