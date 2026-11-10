@@ -8,6 +8,56 @@ Sanket Transcribe is the second page. It records from the microphone or an audio
 
 The Reference page is where an administrator files updates and a designated commander approves them. Ordinary radio audio never edits that file.
 
+The control room is a separate monitoring screen. It has no push-to-talk button. Phones keep using the Talk page. The server transcribes and translates each clip and pushes the text back over the WebSocket. The Talk page does not download Whisper or a translation model.
+
+## Control room
+
+On one host, including the Render demo, open `/#/control`. On the self-hosted pair, Talk is `https://ptt.bowlinger.net` and the control room is `https://pttadmin.bowlinger.net`. Both names reach the same process. Set `PUBLIC_HOST` and `ADMIN_HOST` together. If either is empty, every route stays on the one host and the control room remains `/#/control`.
+
+The talk hostname serves the Talk page, `/api/lines`, `/health`, and `/ws`. Control APIs and the demo-code login return 404 there. The admin hostname serves the control room and its APIs. Its WebSocket is closed so that hostname is not a second radio. The admin cookie is host-only (`SameSite=Lax`, no `Domain`), so a Talk browser does not send it.
+
+Sign in with `ADMIN_TOKEN` or the shared demo code. From the console you can:
+
+- Create, rename, enable, disable, and delete lines. Each line has a join link and a QR code that opens Talk on that line.
+- Watch who is online, the current floor, and a short activity feed.
+- Read the communication log in India Standard Time, filter it, play the stored clip, and export CSV or TXT.
+- Choose the speech recognizer, English/Hindi translation, clip retention, and an optional ElevenLabs Scribe key. The key is stored in `DATA_DIR` and is not returned to the browser. Scribe runs only after local recognition fails, and it does not translate. Telugu text is kept as spoken and is not guessed into another language.
+- Open the Reference review screen.
+
+Lines and settings are files under `DATA_DIR` (`console/lines.json`, `console/settings.json`). Clips and audio are under `DATA_DIR/radio`. The default retention is 14 days.
+
+Self-hosted rebuild, with the process listening on port 8010 for the tunnel:
+
+```sh
+docker build -t sanket-ptt .
+docker rm -f sanket-ptt
+docker run -d --name sanket-ptt --restart unless-stopped -p 8010:8010 \
+  -e PORT=8010 \
+  -e HOST=0.0.0.0 \
+  -e PUBLIC_HOST=ptt.bowlinger.net \
+  -e ADMIN_HOST=pttadmin.bowlinger.net \
+  -e DATA_DIR=/data \
+  -e DEMO_ORIGINS=https://ptt.bowlinger.net,https://pttadmin.bowlinger.net \
+  -e CORS_ORIGINS=https://ptt.bowlinger.net,https://pttadmin.bowlinger.net \
+  -e ASR_PROVIDER=transformers \
+  -e TRANSLATE_PROVIDER=opus \
+  -v /var/lib/sanket-ptt:/data \
+  sanket-ptt
+```
+
+Cloudflare Tunnel ingress, both names to that same port:
+
+```yaml
+ingress:
+  - hostname: ptt.bowlinger.net
+    service: http://127.0.0.1:8010
+  - hostname: pttadmin.bowlinger.net
+    service: http://127.0.0.1:8010
+  - service: http_status:404
+```
+
+For local recognition on that server, install the image as written and set the two providers above. The first clip downloads Whisper tiny and the English-Hindi OPUS models into `MODEL_DIR` inside the data volume. The free Render service does not run those models; its control room can still manage lines, and transcripts stay "recognition is off" until a provider is selected on a machine that can run them.
+
 ## Run the browser app
 
 ```sh
@@ -30,7 +80,7 @@ The server listens on `0.0.0.0:8080` unless `HOST` and `PORT` are set. Copy `.en
 
 | Check | Result |
 | --- | --- |
-| `npm test` | 35 tests passed. Floor control, isolated in-memory audio, approval, forwards, expiry, SSRF, webhook signature, and the unconfigured recognizer. |
+| `npm test` | 60 tests passed, 2 live-provider files skipped. Includes line management, host split, the caption queue, and the unconfigured recognizer. |
 | Public MQTT | HiveMQ, EMQX, and Shiftr accepted an isolated diagnostic topic from this machine. `test.mosquitto.org:8081` closed the socket, so it is not in the default list. |
 | Two browsers on the public demo channel | Not run. Tests use an in-memory channel. |
 | Local Whisper, OPUS translation, espeak-ng | Run with `LIVE_PROVIDERS=1 npx vitest run tests/live/providers.test.ts`. The default `npm test` skips that file and uses mocks only for the service tests. |
@@ -83,4 +133,4 @@ That build was not run here. Compose reads `.env` and does not start a translato
 
 ## Legacy channel
 
-Settings still default to `sanket-ptt/v1/sanket-1/`. The previous public demo topic `hyd-police-ptt/demo1/hyd-1/` can be typed as the topic root. Audio framing is unchanged, so an older page can still hear a newer one on the same topic. The Android file in `releases/` is an old WebView shell and is not required.
+The default line is `sanket-ptt/v1/sanket-1/`. The control room can add more lines under `sanket-ptt/v1/<line-id>/`. A join link looks like `https://ptt.bowlinger.net/#/?line=north-1`. The previous public demo topic `hyd-police-ptt/demo1/hyd-1/` is still an allowed relay prefix. Audio framing is unchanged. The Android file in `releases/` is an old WebView shell and is not required.

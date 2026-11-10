@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PcmRing, buildWav, concatInt16, downsampleToPcm, toWhisperAudio } from '../lib/audio.ts'
+import { PcmRing, buildWav, concatInt16, downsampleToPcm } from '../lib/audio.ts'
 import {
   CLIP_GAP_MS,
   MAX_CLIP_MS,
@@ -17,27 +17,17 @@ import { phaseOf, type Phase } from '../lib/phase.ts'
 import { Radio, type RadioView, type Speaker } from '../lib/radio.ts'
 import { RelayWire } from '../lib/relay-transport.ts'
 import type { NetSnapshot, Wire } from '../lib/transport.ts'
-import { askChannel } from '../lib/api.ts'
-import { CaptionQueue, type CaptionJob } from '../lib/caption-queue.ts'
-import { speechRuntime } from '../lib/device-speech.ts'
-import { readableTranscript } from '../lib/format.ts'
+import { askChannel, backendBase } from '../lib/api.ts'
+import { lineId as validLineId } from '../lib/lines.ts'
+import type { ServerCaption } from '../lib/packets.ts'
 import {
   clearStoredSpeechKey,
   loadBackend,
-  loadLang,
   loadName,
-  loadTarget,
-  loadTopic,
   loadTransport,
-  saveLang,
   saveName,
-  saveTarget,
 } from '../lib/storage.ts'
-import { CloudKeyNeeded, clearScribeKey, saveScribeKey, scribeKeyStatus, transcribeScribe } from '../lib/scribe-client.ts'
-import type { CloudKeySource } from '../lib/scribe-prompt.ts'
-import { ensureModel, transcribeLocal, watchModel, type ModelStatus } from '../lib/transcribe.ts'
-import { ensureTranslation, translateLocal, watchTranslation, type TranslateStatus } from '../lib/translate-local.ts'
-import { LANGUAGES, type ChatMessage, type LangId } from '../lib/types.ts'
+import type { ChatMessage } from '../lib/types.ts'
 
 export type { Phase }
 
@@ -70,21 +60,19 @@ type OpenClip = {
 
 const EMPTY_RADIO: RadioView = { users: [], floor: null, me: '', online: false }
 
-function langOption(id: LangId) {
-  return LANGUAGES.find((item) => item.id === id) ?? LANGUAGES[0]
+type PublicLine = { id: string; name: string; topic: string }
+
+function hashLine(): string {
+  const hash = window.location.hash
+  const query = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : ''
+  const id = new URLSearchParams(query).get('line') ?? ''
+  return validLineId(id) ?? ''
 }
 
 export function usePtt() {
   const [name, setNameState] = useState(loadName)
-  const [lang, setLangState] = useState<LangId>(loadLang)
-  const [target, setTargetState] = useState<LangId>(loadTarget)
-  const [cloudFallback, setCloudFallbackState] = useState(false)
-  const [keySource, setKeySource] = useState<CloudKeySource>('none')
-  const [needsKey, setNeedsKey] = useState(false)
-  const [keyNote, setKeyNote] = useState('')
-  const [model, setModel] = useState<ModelStatus>({ state: 'idle' })
-  const [translationModel, setTranslationModel] = useState<TranslateStatus>({ state: 'idle' })
-  const [runtimeNote] = useState(() => speechRuntime().note)
+  const [lineId, setLineId] = useState(hashLine)
+  const [lines, setLines] = useState<PublicLine[]>([])
   const [radioState, setRadioState] = useState<RadioView>(EMPTY_RADIO)
   const [net, setNet] = useState<NetSnapshot>({
     state: 'connecting',
@@ -107,9 +95,6 @@ export function usePtt() {
   const [tick, setTick] = useState(0)
 
   const nameRef = useRef(name)
-  const langRef = useRef(lang)
-  const targetRef = useRef(target)
-  const cloudRef = useRef(cloudFallback)
   const locRef = useRef<GeoFix | null>(null)
   const radioRef = useRef<Radio | null>(null)
   const floorRef = useRef<RadioView['floor']>(null)
@@ -123,7 +108,6 @@ export function usePtt() {
   const rxRef = useRef<OpenClip | null>(null)
   const lastRxRef = useRef(0)
   const ringRef = useRef(new PcmRing(Math.round((PRE_ROLL_MS / 1000) * SAMPLE_RATE)))
-  const queueRef = useRef<CaptionQueue | null>(null)
   const acRef = useRef<AudioContext | null>(null)
   const playAtRef = useRef(0)
   const streamRef = useRef<MediaStream | null>(null)
@@ -131,50 +115,46 @@ export function usePtt() {
   const onPcmRef = useRef<(input: Float32Array, sampleRate: number) => void>(() => {})
 
   nameRef.current = name
-  langRef.current = lang
-  targetRef.current = target
-  cloudRef.current = cloudFallback
   locRef.current = loc
 
-  function patchMessage(key: string, patch: Partial<ChatMessage>) {
-    setMessages((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)))
-  }
-
-  function queue(): CaptionQueue {
-    if (!queueRef.current) {
-      queueRef.current = new CaptionQueue({
-        transcribe: async (job) => {
-          const option = langOption(job.sourceLang)
-          try {
-            const text = readableTranscript(await transcribeLocal(toWhisperAudio(job.pcm), option.whisper))
-            return { text, via: 'device' as const }
-          } catch (error) {
-            if (!cloudRef.current || !job.wav) throw error
-            try {
-              const text = readableTranscript(await transcribeScribe(job.wav, option.eleven))
-              return { text, via: 'scribe' as const }
-            } catch (cloudError) {
-              if (cloudError instanceof CloudKeyNeeded) setNeedsKey(true)
-              const localMessage = error instanceof Error ? error.message : 'On-device recognition failed'
-              const cloudMessage = cloudError instanceof Error ? cloudError.message : 'Cloud transcription failed'
-              throw new Error(`${localMessage} ${cloudMessage}`)
-            }
-          }
-        },
-        translate: (text, source, targetLang) => translateLocal(text, source, targetLang),
-        onUpdate: (messageId, patch, job) => {
-          patchMessage(messageId, patch)
-          if (job.direction === 'tx' && patch.phase === 'done' && patch.transcript && isExplicitQuestion(patch.transcript) && patch.transcript !== 'No speech detected') {
-            void askChannel(patch.transcript, meRef.current, topicRef.current)
-          }
-        },
-      })
-    }
-    return queueRef.current
-  }
-
-  function enqueue(job: CaptionJob) {
-    queue().enqueue(job)
+  function applyCaption(caption: ServerCaption) {
+    setMessages((prev) => {
+      const index = prev.findIndex((item) => item.speakerId === caption.speakerId && item.pending)
+      const patch: Partial<ChatMessage> = {
+        transcript: caption.transcript,
+        translation: caption.translation,
+        translationNote: caption.translationNote,
+        pending: false,
+        phase: 'done',
+        error: caption.status === 'failed' ? caption.translationNote : null,
+      }
+      if (index === -1) {
+        return [{
+          key: caption.clipId,
+          name: caption.speakerName,
+          mine: caption.speakerId === meRef.current,
+          speakerId: caption.speakerId,
+          t0: Date.parse(caption.at) || Date.now(),
+          dur: 0,
+          url: '',
+          loc: null,
+          transcript: caption.transcript,
+          translation: caption.translation,
+          translationNote: caption.translationNote,
+          error: caption.status === 'failed' ? caption.translationNote : null,
+          pending: false,
+          phase: 'done' as const,
+        }, ...prev].slice(0, 40)
+      }
+      const next = [...prev]
+      const current = next[index]
+      if (!current) return prev
+      next[index] = { ...current, ...patch }
+      if (current.mine && caption.transcript && isExplicitQuestion(caption.transcript)) {
+        void askChannel(caption.transcript, meRef.current, topicRef.current)
+      }
+      return next
+    })
   }
 
   function publishClip(clip: OpenClip) {
@@ -187,15 +167,14 @@ export function usePtt() {
       name: clip.name,
       mine: clip.mine,
       direction: clip.mine ? 'tx' : 'rx',
-      sourceLang: langRef.current,
-      targetLang: targetRef.current,
+      speakerId: clip.id,
       t0: clip.t0,
       dur: pcm.length / SAMPLE_RATE,
       url,
       loc: clip.loc,
       transcript: null,
       translation: null,
-      translationNote: null,
+      translationNote: 'Waiting for the server transcript.',
       error: null,
       pending: true,
       phase: 'transcribing',
@@ -207,16 +186,6 @@ export function usePtt() {
         if (!keep.has(old.key)) URL.revokeObjectURL(old.url)
       }
       return next
-    })
-    enqueue({
-      messageId: message.key,
-      direction: message.direction ?? 'rx',
-      speakerId: clip.id,
-      selfId: meRef.current,
-      sourceLang: langRef.current,
-      targetLang: targetRef.current,
-      pcm,
-      wav,
     })
   }
 
@@ -426,13 +395,29 @@ export function usePtt() {
 
   useEffect(() => {
     clearStoredSpeechKey()
-    watchModel(setModel)
-    watchTranslation(setTranslationModel)
-    const runtime = speechRuntime()
-    if (runtime.worker && runtime.wasm) ensureModel()
+    let cancel = false
+    void fetch(`${backendBase()}/api/lines`, { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((body: { lines?: PublicLine[] }) => {
+        if (cancel) return
+        const list = body.lines ?? []
+        setLines(list)
+        setLineId((current) => current || list[0]?.id || 'sanket-1')
+      })
+      .catch(() => setLineId((current) => current || 'sanket-1'))
+    const onHash = () => {
+      const id = hashLine()
+      if (id) setLineId(id)
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => {
+      cancel = true
+      window.removeEventListener('hashchange', onHash)
+    }
   }, [])
 
   useEffect(() => {
+    if (!lineId) return
     let radio: Radio | null = null
     let cancelled = false
     void (async () => {
@@ -441,7 +426,7 @@ export function usePtt() {
         wire.stop()
         return
       }
-      const root = safeTopicRoot(loadTopic()) ?? DEFAULT_TOPIC_ROOT
+      const root = safeTopicRoot(`sanket-ptt/v1/${lineId}/`) ?? DEFAULT_TOPIC_ROOT
       topicRef.current = root
       radio = new Radio(wire, root, {
         state: (view) => {
@@ -460,6 +445,7 @@ export function usePtt() {
           finishTx()
           ringRef.current.clear()
         },
+        caption: (caption) => applyCaption(caption),
         notice: (notice) => {
           const wav = buildWav([new Int16Array(Math.round(SAMPLE_RATE / 10))], SAMPLE_RATE)
           const url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
@@ -553,13 +539,9 @@ export function usePtt() {
       cancelled = true
       radio?.stop()
     }
-    // The radio session lives for the whole page. Handlers read refs.
+    // Restart the radio when the selected line changes. Handlers read refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    if (speechRuntime().worker) ensureTranslation(lang, target)
-  }, [lang, target])
+  }, [lineId])
 
   const floor = radioState.floor
   const me = radioState.me
@@ -586,55 +568,14 @@ export function usePtt() {
     if (next.trim()) radioRef.current?.rename(next.trim())
   }
 
-  function setLang(value: LangId) {
-    setLangState(value)
-    saveLang(value)
-  }
-
-  function setTarget(value: LangId) {
-    setTargetState(value)
-    saveTarget(value)
-  }
-
-  async function setCloudFallback(value: boolean) {
-    setCloudFallbackState(value)
-    if (!value) {
-      setNeedsKey(false)
-      setKeyNote('')
-      return
-    }
-    try {
-      const status = await scribeKeyStatus()
-      setKeySource(status.serverRejected && status.source === 'server' ? 'none' : status.source)
-      const ask = status.source === 'none' || status.serverRejected
-      setNeedsKey(ask && status.source !== 'session')
-      setKeyNote(status.serverRejected ? 'The saved server key was rejected and will not be used again.' : '')
-    } catch (error) {
-      setCloudFallbackState(false)
-      setNeedsKey(false)
-      setKeyNote(error instanceof Error ? error.message : 'Cloud status could not be checked. Staying on this device.')
-    }
-  }
-
-  async function saveCloudKey(value: string) {
-    await saveScribeKey(value)
-    setKeySource('session')
-    setNeedsKey(false)
-    setKeyNote('Saved for this session only. Clear it here, or it expires when the session ends.')
-  }
-
-  async function clearCloudKey() {
-    await clearScribeKey()
-    const status = await scribeKeyStatus().catch(() => ({ source: 'none' as const, serverRejected: false }))
-    setKeySource(status.source === 'server' ? 'server' : 'none')
-    setNeedsKey(status.source !== 'server')
-    setKeyNote(status.source === 'server' ? '' : 'Session key cleared.')
-  }
-
-  function skipCloud() {
-    setCloudFallbackState(false)
-    setNeedsKey(false)
-    setKeyNote('Staying on this device.')
+  function chooseLine(id: string) {
+    const next = validLineId(id)
+    if (!next) return
+    setLineId(next)
+    const base = window.location.hash.startsWith('#/transcribe') || window.location.hash.startsWith('#/reference') || window.location.hash.startsWith('#/control')
+      ? '#/'
+      : '#/'
+    window.location.hash = `${base}?line=${next}`
   }
 
   function clearMessages() {
@@ -648,21 +589,9 @@ export function usePtt() {
   return {
     name,
     setName,
-    lang,
-    setLang,
-    target,
-    setTarget,
-    cloudFallback,
-    setCloudFallback,
-    keySource,
-    needsKey,
-    keyNote,
-    saveCloudKey,
-    clearCloudKey,
-    skipCloud,
-    model,
-    translationModel,
-    runtimeNote,
+    lineId,
+    lines,
+    chooseLine,
     phase,
     net,
     users: radioState.users,

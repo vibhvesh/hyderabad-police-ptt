@@ -70,8 +70,8 @@ export function readCookie(header: string | undefined, name: string): string | n
   return null
 }
 
-export function demoCookie(id: string): string {
-  return `sanket_demo=${id}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=${SESSION_MS / 1000}`
+export function demoCookie(id: string, sameSite: 'None' | 'Lax' = 'None'): string {
+  return `sanket_demo=${id}; HttpOnly; Secure; SameSite=${sameSite}; Path=/; Max-Age=${SESSION_MS / 1000}`
 }
 
 export function clearDemoCookie(): string {

@@ -46,6 +46,7 @@ export function MessageList({ messages, onForward }: { messages: ChatMessage[]; 
               variant={playing === message.key ? 'secondary' : 'default'}
               className="shrink-0 rounded-full"
               aria-label={playing === message.key ? `Stop ${message.name}` : `Play ${message.name}`}
+              disabled={!message.url}
               onClick={() => toggle(message)}
             >
               {playing === message.key ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -62,7 +63,7 @@ export function MessageList({ messages, onForward }: { messages: ChatMessage[]; 
           </div>
           <p className="mt-2 text-sm leading-snug text-slate-800">
             {message.phase === 'transcribing' || (message.pending && !message.transcript) ? (
-              <span className="text-slate-500">{message.via === 'scribe' ? 'Cloud transcription…' : 'Transcribing on this device…'}</span>
+              <span className="text-slate-500">Waiting for the server transcript…</span>
             ) : message.error && !message.transcript ? (
               <span className="text-red-700">{message.error}</span>
             ) : (
@@ -71,16 +72,9 @@ export function MessageList({ messages, onForward }: { messages: ChatMessage[]; 
           </p>
           {message.role === 'assistant' || (!message.translation && !message.translationNote && message.phase !== 'translating') ? null : (
             <p className="mt-1 text-sm leading-snug text-emerald-900">
-              {message.phase === 'translating' ? (
-                <span className="text-slate-500">Translating on this device…</span>
-              ) : message.translation ? (
-                message.translation
-              ) : (
-                <span className="text-slate-500">{message.translationNote}</span>
-              )}
+              {message.translation ? message.translation : <span className="text-slate-500">{message.translationNote}</span>}
             </p>
           )}
-          {message.via === 'scribe' ? <p className="mt-1 text-xs text-slate-500">Transcript from Scribe. Translation stayed on this device.</p> : null}
           {message.citation ? <p className="mt-1 text-xs text-teal-800">{message.citation}</p> : null}
           <p className="mt-1 text-xs text-slate-500">{formatLoc(message.loc)}</p>
           {onForward && message.transcript && !message.pending && message.role !== 'assistant' ? (

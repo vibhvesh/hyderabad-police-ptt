@@ -6,7 +6,7 @@ import {
 } from './constants.ts'
 import { reduceFloor, type Floor, type FloorMsg } from './floor.ts'
 import { cleanLoc, type GeoFix } from './format.ts'
-import { decodeAudio, decodeNotice, encodeAudio, type ChannelNotice } from './packets.ts'
+import { decodeAudio, decodeCaption, decodeNotice, encodeAudio, type ChannelNotice, type ServerCaption } from './packets.ts'
 import type { NetSnapshot, Wire } from './transport.ts'
 
 export type Station = { id: string; name: string; seen: number }
@@ -20,6 +20,7 @@ type Handlers = {
   net: (net: NetSnapshot) => void
   lost: () => void
   notice: (notice: ChannelNotice) => void
+  caption?: (caption: ServerCaption) => void
 }
 
 function bytes(payload: Uint8Array): Uint8Array {
@@ -65,7 +66,7 @@ export class Radio {
   start(name: string) {
     this.name = name.slice(0, 40)
     this.stopped = false
-    this.wire.subscribe([`${this.root}presence/+`, `${this.root}floor`, `${this.root}audio`, `${this.root}notice`])
+    this.wire.subscribe([`${this.root}presence/+`, `${this.root}floor`, `${this.root}audio`, `${this.root}notice`, `${this.root}caption`])
     this.wire.start()
     this.timer = setInterval(() => this.tick(), 1000) as unknown as number
   }
@@ -221,6 +222,11 @@ export class Radio {
     if (rest === 'notice') {
       const notice = decodeNotice(raw)
       if (notice) this.handlers.notice(notice)
+      return
+    }
+    if (rest === 'caption') {
+      const caption = decodeCaption(raw)
+      if (caption) this.handlers.caption?.(caption)
       return
     }
     if (rest !== 'audio') return

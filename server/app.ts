@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import http from 'node:http'
@@ -33,7 +34,16 @@ import { createAsr, createTranslator, createTts } from './providers.ts'
 import { Relay } from './relay.ts'
 import { checkSourceUrl, pullSource, resolveHost, type FetchLike } from './sources.ts'
 import { KbStore } from './store.ts'
+import { CaptionQueue } from './caption-queue.ts'
+import { handleControl } from './control-routes.ts'
+import { ConsoleSettingsStore, defaultConsoleSettings } from './console-settings.ts'
 import { DemoGate, clearDemoCookie, codesMatch, demoCookie, readCookie } from './demo-access.ts'
+import { isAdminApi, surfaceFromHeaders } from '../src/lib/host-surface.ts'
+import { lineTopic } from '../src/lib/lines.ts'
+import { LinesStore } from './lines-store.ts'
+import { processRadioClip } from './radio-processor.ts'
+import { RadioLog } from './radio-log.ts'
+import { RadioMonitor, type ClosedClip } from './radio-monitor.ts'
 import { liveScribe, scribeConfiguredDetail, type ScribeGateway } from './scribe.ts'
 import { ScribeSessions, clearScribeCookie, clipDurationMs, publicScribeError, scribeCookie, SCRIBE_COOKIE, MAX_CLIP_MS } from './scribe-session.ts'
 
@@ -81,6 +91,56 @@ export function createApp(options: AppOptions = {}) {
   const tts = createTts(config)
   const relay = new Relay()
   const assistant = new AssistantRuntime(relay, store, tts, now)
+  const lines = new LinesStore(path.join(config.dataDir, 'console', 'lines.json'), () => new Date(now()).toISOString())
+  const consoleSettings = new ConsoleSettingsStore(path.join(config.dataDir, 'console', 'settings.json'), defaultConsoleSettings(config))
+  const radioLog = new RadioLog(path.join(config.dataDir, 'radio'))
+  const captions = new CaptionQueue<ClosedClip>(async (clip) => {
+    const id = randomUUID()
+    await radioLog.add({
+      id,
+      lineId: clip.line.id,
+      lineName: clip.line.name,
+      speakerId: clip.speakerId,
+      speakerName: clip.speakerName,
+      at: new Date(clip.startedAt).toISOString(),
+      durationMs: clip.durationMs,
+      wav: clip.wav,
+    })
+    const settings = consoleSettings.get()
+    const result = await processRadioClip({
+      wav: clip.wav,
+      source: clip.line.sourceLang,
+      target: clip.line.targetLang,
+      settings,
+      config,
+      scribe: async (apiKey, wav, language) => gatewayFor(apiKey).convert(wav, language),
+    })
+    const saved = radioLog.finish(id, {
+      transcript: result.transcript,
+      translation: result.translation,
+      translationNote: result.translationNote,
+      status: result.status,
+    })
+    radioLog.retain(settings.retentionDays, now())
+    monitor.note(clip.line.id, `${clip.speakerName}: ${result.transcript ?? result.translationNote ?? 'no transcript'}`)
+    relay.publish(
+      `${lineTopic(clip.line.id)}caption`,
+      JSON.stringify({
+        clipId: id,
+        lineId: clip.line.id,
+        speakerId: clip.speakerId,
+        speakerName: clip.speakerName,
+        at: saved?.at ?? new Date(clip.startedAt).toISOString(),
+        transcript: result.transcript,
+        translation: result.translation,
+        translationNote: result.translationNote,
+        status: result.status,
+      }),
+    )
+  })
+  const monitor = new RadioMonitor(lines, (clip) => captions.enqueue(clip))
+  relay.tap = (topic, payload) => monitor.ingest(topic, payload, now())
+  const sweepTimer = setInterval(() => monitor.sweep(now()), 400)
   const lookupImpl = options.lookupImpl
   const fetchImpl = options.fetchImpl
 
@@ -96,7 +156,13 @@ export function createApp(options: AppOptions = {}) {
       ? https.createServer({ cert: readFileSyncSafe(config.tlsCert), key: readFileSyncSafe(config.tlsKey) }, onRequest)
       : http.createServer(onRequest)
   const wss = new WebSocketServer({ server, path: '/ws' })
-  wss.on('connection', (socket) => relay.add(socket))
+  wss.on('connection', (socket, request) => {
+    if (currentSurface(request) === 'admin') {
+      socket.close()
+      return
+    }
+    relay.add(socket)
+  })
 
   async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     const started = Date.now()
@@ -119,7 +185,7 @@ export function createApp(options: AppOptions = {}) {
       res.setHeader('access-control-allow-origin', config.cors)
     }
     res.setHeader('access-control-allow-headers', 'authorization, content-type, x-sanket-signature, x-filename, x-actor, x-speaker-id, x-test-transcript')
-    res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS')
+    res.setHeader('access-control-allow-methods', 'GET, POST, PATCH, DELETE, OPTIONS')
   }
 
   async function route(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -130,6 +196,32 @@ export function createApp(options: AppOptions = {}) {
       return
     }
     const url = new URL(req.url ?? '/', 'http://localhost')
+    const surface = currentSurface(req)
+    if (req.method === 'GET' && url.pathname === '/api/site') {
+      send(res, 200, { surface, talkOrigin: config.publicHost ? `https://${config.publicHost}` : null })
+      return
+    }
+    if (req.method === 'GET' && url.pathname === '/api/lines') {
+      send(res, 200, {
+        lines: lines.list().filter((line) => line.enabled).map((line) => ({ id: line.id, name: line.name, topic: lineTopic(line.id) })),
+      })
+      return
+    }
+    if (surface === 'talk' && isAdminApi(url.pathname)) {
+      send(res, 404, { error: 'not_found', message: 'No such route.' })
+      return
+    }
+    if (await handleControl(req, res, {
+      lines,
+      settings: consoleSettings,
+      log: radioLog,
+      monitor,
+      now,
+      talkOrigin: config.publicHost ? `https://${config.publicHost}` : null,
+      send,
+      jsonBody,
+      admin: (request, response) => allowAdmin(request, response),
+    })) return
     const parts = url.pathname.split('/').filter(Boolean)
     if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/api/health')) {
       send(res, 200, health())
@@ -170,9 +262,9 @@ export function createApp(options: AppOptions = {}) {
           detail: scribeConfiguredDetail(scribeMode()),
         },
         device: {
-          asr: 'whisper-tiny',
-          translate: 'opus-browser',
-          detail: 'Live radio captions run in the browser. This server does not have to load those models.',
+          asr: 'server',
+          translate: 'server',
+          detail: 'Talk clients only display captions produced on this server.',
         },
       },
       auth: {
@@ -211,6 +303,26 @@ export function createApp(options: AppOptions = {}) {
   function scribeMode(): 'configured' | 'rejected' | 'unconfigured' {
     if (!config.elevenLabsApiKey) return 'unconfigured'
     return configuredKeyRejected ? 'rejected' : 'configured'
+  }
+
+  function currentSurface(req: http.IncomingMessage) {
+    const forwarded = req.headers['x-forwarded-host']
+    return surfaceFromHeaders(req.headers.host, typeof forwarded === 'string' ? forwarded : undefined, config.publicHost, config.adminHost)
+  }
+
+  function allowAdmin(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    if (!originAllowed(req)) {
+      send(res, 403, { error: 'origin', message: 'This origin cannot use the control room.' })
+      return false
+    }
+    if (authorize(req.headers.authorization, config.adminToken) === 'ok') return true
+    if (gate.valid(readCookie(req.headers.cookie, 'sanket_demo'))) return true
+    if (!config.adminToken && !config.demoAccessCode) {
+      send(res, 503, { error: 'auth_unconfigured', message: 'Set ADMIN_TOKEN or DEMO_ACCESS_CODE before opening the control room.' })
+      return false
+    }
+    send(res, 401, { error: 'unauthorized', message: 'The control room needs the admin token or the shared demo code.' })
+    return false
   }
 
   function originAllowed(req: http.IncomingMessage): boolean {
@@ -383,7 +495,7 @@ export function createApp(options: AppOptions = {}) {
       return
     }
     gate.clear(ip)
-    res.setHeader('set-cookie', demoCookie(gate.open()))
+    res.setHeader('set-cookie', demoCookie(gate.open(), currentSurface(req) === 'admin' ? 'Lax' : 'None'))
     send(res, 200, { access: 'shared-demo' })
   }
 
@@ -877,6 +989,7 @@ export function createApp(options: AppOptions = {}) {
       return typeof address === 'object' && address ? address.port : 0
     },
     close() {
+      clearInterval(sweepTimer)
       return new Promise<void>((resolve, reject) => {
         wss.close()
         server.close((error) => (error ? reject(error) : resolve()))

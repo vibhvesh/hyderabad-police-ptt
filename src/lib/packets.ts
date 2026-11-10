@@ -30,6 +30,39 @@ export type ChannelNotice = {
   citation: string | null
 }
 
+export type ServerCaption = {
+  clipId: string
+  lineId: string
+  speakerId: string
+  speakerName: string
+  at: string
+  transcript: string | null
+  translation: string | null
+  translationNote: string | null
+  status: 'ready' | 'unconfigured' | 'failed'
+}
+
+export function decodeCaption(raw: Uint8Array): ServerCaption | null {
+  try {
+    const value = JSON.parse(new TextDecoder().decode(raw)) as Partial<ServerCaption>
+    if (typeof value.clipId !== 'string' || typeof value.speakerId !== 'string') return null
+    const status = value.status === 'ready' || value.status === 'failed' || value.status === 'unconfigured' ? value.status : 'ready'
+    return {
+      clipId: value.clipId.slice(0, 80),
+      lineId: String(value.lineId ?? '').slice(0, 40),
+      speakerId: value.speakerId.slice(0, 80),
+      speakerName: String(value.speakerName ?? value.speakerId).slice(0, 40),
+      at: typeof value.at === 'string' ? value.at : new Date().toISOString(),
+      transcript: typeof value.transcript === 'string' ? value.transcript.slice(0, 4_000) : null,
+      translation: typeof value.translation === 'string' ? value.translation.slice(0, 4_000) : null,
+      translationNote: typeof value.translationNote === 'string' ? value.translationNote.slice(0, 500) : null,
+      status,
+    }
+  } catch {
+    return null
+  }
+}
+
 export function encodeNotice(notice: ChannelNotice): string {
   return JSON.stringify(notice)
 }

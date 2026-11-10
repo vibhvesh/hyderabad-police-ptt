@@ -1,11 +1,10 @@
 import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { concatInt16, downsampleToPcm, toWhisperAudio } from '@/lib/audio'
+import { concatInt16, downsampleToPcm } from '@/lib/audio'
 import { apiFetch, INGEST_TOKEN_KEY } from '@/lib/api'
 import { voiceBlock } from '@/lib/blocks'
 import { loadSession } from '@/lib/storage'
-import { transcribeLocal } from '@/lib/transcribe'
-import { translateText, type Translation } from '@/lib/translate-client'
+import type { Translation } from '@/lib/translate-client'
 import { LANGUAGES, type LangId } from '@/lib/types'
 
 type Segment = { id: string; original: string; translation: Translation | null; source: string }
@@ -13,30 +12,18 @@ type Segment = { id: string; original: string; translation: Translation | null; 
 export function TranscribeView() {
   const [source, setSource] = useState<LangId>('te')
   const [target, setTarget] = useState<LangId>('en')
-  const [status, setStatus] = useState('Ready. Telugu is the default recognition language.')
-  const [segments, setSegments] = useState<Segment[]>([])
+  const [status, setStatus] = useState('Radio clips are transcribed on the server. This page does not download a speech model.')
+  const [segments] = useState<Segment[]>([])
   const [listening, setListening] = useState(false)
   const [referenceMode, setReferenceMode] = useState(false)
   const [draft, setDraft] = useState('')
-  const [asr, setAsr] = useState('')
+  const [asr] = useState('')
   const [confirmed, setConfirmed] = useState(false)
   const chunks = useRef<Int16Array[]>([])
   const stream = useRef<MediaStream | null>(null)
 
-  async function finish(pcm: Int16Array, label: string) {
-    setStatus('Transcribing on this device…')
-    const option = LANGUAGES.find((item) => item.id === source) ?? LANGUAGES[0]
-    try {
-      const text = (await transcribeLocal(toWhisperAudio(pcm), option?.whisper ?? 'telugu')).trim()
-      const translation = await translateText(text, source, target)
-      setSegments((prev) => [{ id: crypto.randomUUID(), original: text || 'No speech detected', translation, source: label }, ...prev])
-      setAsr(text)
-      setDraft(text)
-      setConfirmed(false)
-      setStatus(translation.state === 'translated' ? 'Transcript ready.' : translation.note)
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Transcription failed.')
-    }
+  async function finish(_pcm: Int16Array, _label: string) {
+    setStatus('This browser does not transcribe. Radio clips are transcribed and translated on the server.')
   }
 
   async function start() {
@@ -115,7 +102,7 @@ export function TranscribeView() {
 
   return (
     <main className="flex flex-col gap-4 px-4 py-5">
-      <p className="text-sm text-slate-600">Separate recorder for a file or a microphone take. Live radio messages are transcribed on the Talk page. Recognition stays on this device unless you explicitly send a file to a configured server.</p>
+      <p className="text-sm text-slate-600">Live radio transcripts are produced on the server and shown on the Talk page. This page can still send a file to a configured server. It does not run Whisper or a translation model in the browser.</p>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">Recognition
           <select className="mt-1 w-full rounded-md border px-2 py-2" value={source} onChange={(event) => setSource(event.target.value as LangId)}>

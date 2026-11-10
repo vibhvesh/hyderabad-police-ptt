@@ -11,6 +11,7 @@ export type ChatMessage = {
   name: string
   mine: boolean
   direction?: 'tx' | 'rx'
+  speakerId?: string
   sourceLang?: LangId
   targetLang?: LangId
   t0: number

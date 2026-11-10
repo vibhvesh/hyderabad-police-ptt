@@ -48,7 +48,7 @@ export function createAsr(config: Config): AsrProvider {
     status: () => ({
       id: 'none',
       mode: 'unconfigured',
-      detail: 'Set ASR_PROVIDER=transformers for local Whisper, or whisper-cli, or use on-device Whisper in the browser.',
+      detail: 'Set ASR_PROVIDER=transformers for local Whisper, or whisper-cli. The Talk page does not transcribe on the device.',
     }),
     async transcribe() {
       return { error: 'asr_unconfigured', message: 'Server speech recognition is not configured.' }

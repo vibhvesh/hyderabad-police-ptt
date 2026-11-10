@@ -1,3 +1,5 @@
+import { hostnameOf } from '../src/lib/host-surface.ts'
+
 export type ProviderMode = 'unconfigured' | 'live' | 'mock' | 'remote'
 
 export type Config = {
@@ -34,6 +36,8 @@ export type Config = {
   demoAccessCode: string | null
   demoOrigins: string[]
   elevenLabsApiKey: string | null
+  publicHost: string | null
+  adminHost: string | null
 }
 
 function blank(value: string | undefined): string | null {
@@ -82,10 +86,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     tlsCert: blank(env.TLS_CERT),
     tlsKey: blank(env.TLS_KEY),
     demoAccessCode: blank(env.DEMO_ACCESS_CODE),
-    demoOrigins: (env.DEMO_ORIGINS?.trim() || 'https://sanket-ptt.onrender.com,https://vibhvesh.github.io')
+    demoOrigins: (env.DEMO_ORIGINS?.trim() || 'https://sanket-ptt.onrender.com,https://vibhvesh.github.io,https://ptt.bowlinger.net,https://pttadmin.bowlinger.net')
       .split(',')
       .map((origin) => origin.trim())
       .filter(Boolean),
     elevenLabsApiKey: blank(env.ELEVENLABS_API_KEY),
+    publicHost: hostnameOf(env.PUBLIC_HOST),
+    adminHost: hostnameOf(env.ADMIN_HOST),
   }
 }
