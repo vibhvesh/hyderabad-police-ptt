@@ -212,13 +212,34 @@ Hold BOOT, tap EN, and release BOOT if the upload does not start. Leave GPIO0, G
 
 Hold the GPIO4 button for about 3 seconds from power-up to open the setup page.
 
-### ESP8266 NodeMCU is not supported
+### ESP8266 NodeMCU cannot talk
 
-The older NodeMCU v2 and v3 boards use an ESP8266. This firmware does not build for them.
+The older NodeMCU v2 and v3 boards use an ESP8266. There is no talk build for them.
 
-The ESP8266 I2S block can play audio out. It has no I2S input, so an INMP441 cannot be read as a microphone. Bit-banging the mic drops samples and still leaves no second clock for the amplifier. The chip has about 80 KB of RAM. After Wi-Fi, what remains is too small for a TLS WebSocket, the certificate check, and a jitter buffer at the same time. A build that connected and then stuttered or reset would look like a working handset and would not be one.
+The ESP8266 I2S block can play audio out. It has no I2S input, so an INMP441 cannot be read as a microphone. The chip has about 80 KB of RAM. After Wi-Fi and TLS, what remains is too small for a microphone buffer and a speaker buffer together. A full handset on this chip would reset or garble the audio.
 
-Use a NodeMCU-32S for this wiring. The env name is `nodemcu-32s`.
+Use a NodeMCU-32S when the device must also talk. The env name is `nodemcu-32s`. The ESP8266 build below only listens.
+
+### ESP8266 listen-only
+
+A NodeMCU v2 or v3 can play the line and nothing else. Build that with `pio run -e nodemcu-esp8266`. The flag `LISTEN_ONLY` is on for that env. The same flag can be added to any ESP32 env (`-DLISTEN_ONLY`) so that board skips the microphone and the talk button and only plays. Volume buttons are used when the profile names them. On the NodeMCU-32S those are GPIO16 (down) and GPIO17 (up), and they do nothing unless the flag is set.
+
+The ESP8266 asks the server for 8 kHz audio. The server sends that device a shorter copy of each packet and leaves phones on 12 kHz. The player keeps about 100 ms of audio in a fixed buffer. That is as much RAM as this chip can spare next to the TLS connection.
+
+I2S pins on the ESP8266 are fixed:
+
+| Pin | GPIO | Connects to |
+| --- | --- | --- |
+| D8 | 15 | MAX98357A BCLK. Add a 10 kΩ pulldown to ground so the board can still boot. |
+| D4 | 2 | MAX98357A LRC. This is also a boot pin and the v3 onboard LED, so that LED flickers with the audio clock. |
+| RX | 3 | MAX98357A DIN. Serial logging stops being useful once audio starts, because RX is the data pin. |
+| D0 | 16 | Status LED, active low. This is the onboard LED on a v2 board. |
+| D6 | 12 | Optional volume down, to ground. |
+| D5 | 14 | Optional volume up, to ground. Hold it for 3 seconds at power-up to open setup. |
+| A0 |  | Optional battery. Put 100 kΩ between the cell positive and A0. The board's own divider does the rest. Full scale is about 4.2 V. |
+| 3V3, GND |  | Amp power and ground. Tie the amp SD pin to 3.3 V and GAIN to ground. |
+
+There is no microphone in this build. A button on this board does not transmit. The control room shows the device as listen-only after it connects.
 
 ## Other boards
 
@@ -234,6 +255,7 @@ pio run -e s3_korvo2_es8311
 | --- | --- |
 | `esp32-a1s` | AI-Thinker ESP32-A1S Audio Kit. Default. Classic ESP32, 4 MB flash, 8 MB PSRAM. |
 | `nodemcu-32s` | NodeMCU-32S with an INMP441, a MAX98357A, a button, the onboard LED, and a battery divider on GPIO34. |
+| `nodemcu-esp8266` | ESP8266 NodeMCU v2/v3. Listen-only. MAX98357A on the fixed I2S pins. 8 kHz from the server. |
 | `xiao_esp32s3_inmp441_max98357a` | Seeed XIAO ESP32-S3 with the INMP441 and MAX98357A wired above. |
 | `lyrat_v43_es8388` | ESP32-LyraT v4.3, ES8388, I2C 18/23, BCLK 5. |
 | `s3_korvo2_es8311` | ESP32-S3-Korvo-2. ES8311 speaker, ES7210 mics. BOOT is push-to-talk. |
@@ -280,6 +302,7 @@ docker run -d --name sanket-ptt --restart unless-stopped -p 8010:8010 \
 | The XIAO battery percent is nonsense | The divider must be two equal resistors from the cell to GPIO6. |
 | The Audio Kit battery stays blank | The stock board does not wire the cell to an ADC. Add the 100k/100k divider to GPIO34. |
 | Setup page does not appear | On the Audio Kit, hold KEY3 or the IO19 button for 3 seconds from power-up. On the NodeMCU-32S or the XIAO, hold the push-to-talk button the same way. Join `Sanket-Setup`, then open `http://192.168.4.1`. |
-| NodeMCU upload never starts | Hold BOOT, tap EN, release BOOT. The env is `nodemcu-32s`. An ESP8266 NodeMCU cannot run this firmware. |
+| NodeMCU-32S upload never starts | Hold BOOT, tap EN, release BOOT. The env is `nodemcu-32s`. |
+| An ESP8266 board is silent or resets | That build is listen-only (`nodemcu-esp8266`) and plays 8 kHz. It has no microphone. Hold D5 at boot if it needs the setup page. |
 | Upload to the Audio Kit never connects | Hold IO0 to ground, tap reset, then release IO0. Use `pio run -e esp32-a1s -t upload`. |
 | TLS fails and the site is still Let's Encrypt | Uncheck skip-certificate only after the root in `include/ca_store.h` is ISRG Root X1. A different certificate needs that file updated. |

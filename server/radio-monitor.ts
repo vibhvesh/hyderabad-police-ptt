@@ -44,6 +44,7 @@ export type HandsetLive = {
   rssi: number | null
   voltage: number | null
   charging: boolean | null
+  listenOnly: boolean
 }
 export type LiveFloor = { lineId: string; id: string; name: string; since: number }
 export type LiveActivity = { at: string; lineId: string; text: string }
@@ -111,9 +112,9 @@ export class RadioMonitor {
     this.feed = [{ at, lineId, text }, ...this.feed].slice(0, 40)
   }
 
-  linkDevice(id: string, online: boolean, now: number) {
+  linkDevice(id: string, online: boolean, now: number, listenOnly?: boolean) {
     const current = this.handsets.get(id) ?? emptyHandset()
-    this.handsets.set(id, { ...current, online, lastSeen: now })
+    this.handsets.set(id, { ...current, online, lastSeen: now, listenOnly: listenOnly ?? current.listenOnly })
   }
 
   handset(id: string): HandsetLive {
@@ -156,7 +157,7 @@ export class RadioMonitor {
       return
     }
     try {
-      const body = JSON.parse(new TextDecoder().decode(payload)) as { name?: unknown; loc?: unknown; kind?: unknown; battery?: unknown; rssi?: unknown; voltage?: unknown; charging?: unknown }
+      const body = JSON.parse(new TextDecoder().decode(payload)) as { name?: unknown; loc?: unknown; kind?: unknown; battery?: unknown; rssi?: unknown; voltage?: unknown; charging?: unknown; listenOnly?: unknown }
       const name = String(body.name ?? id).slice(0, 40)
       const location = formatLoc(clean(body.loc))
       const battery = bounded(body.battery, 0, 100)
@@ -181,6 +182,7 @@ export class RadioMonitor {
           rssi,
           voltage: bounded(body.voltage, 2.5, 5),
           charging: typeof body.charging === 'boolean' ? body.charging : current.charging,
+          listenOnly: body.listenOnly === true || current.listenOnly,
         })
       }
       this.note(line.id, `${name} is online`)
@@ -206,7 +208,7 @@ export class RadioMonitor {
 }
 
 function emptyHandset(): HandsetLive {
-  return { online: false, lastSeen: null, battery: null, rssi: null, voltage: null, charging: null }
+  return { online: false, lastSeen: null, battery: null, rssi: null, voltage: null, charging: null, listenOnly: false }
 }
 
 function bounded(value: unknown, min: number, max: number): number | null {

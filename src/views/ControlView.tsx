@@ -20,6 +20,7 @@ type Handset = {
   battery: number | null
   rssi: number | null
   voltage: number | null
+  listenOnly?: boolean
 }
 type Clip = {
   id: string
@@ -277,7 +278,7 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
       </section>
       <section className="rounded-xl bg-white p-4">
         <h2 className="font-semibold">Handsets</h2>
-        <p className="mt-1 text-sm text-slate-600">A handset plays the line out loud and talks with one button. Add it on the line, then type the token into the setup page.</p>
+        <p className="mt-1 text-sm text-slate-600">A handset plays the line out loud and talks with one button. A listen-only device only plays. Add it on the line, then type the token into the setup page.</p>
         <ul className="mt-3 text-sm">
           {devices.length === 0 ? <li className="text-slate-500">No handsets yet.</li> : null}
           {devices.map((device) => (
@@ -286,6 +287,7 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
                 <span className="font-semibold">{device.name}</span> · {device.lineId} · {device.id}
                 <span className="block text-xs text-slate-500">
                   {device.revokedAt ? 'Revoked' : device.online ? 'Online' : 'Offline'}
+                  {device.listenOnly ? ' · listen-only' : ''}
                   {device.battery != null ? ` · battery ${device.battery}%` : ''}
                   {device.voltage != null ? ` (${device.voltage} V)` : ''}
                   {device.rssi != null ? ` · ${device.rssi} dBm` : ''}

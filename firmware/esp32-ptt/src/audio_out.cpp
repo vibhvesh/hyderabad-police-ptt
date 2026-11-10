@@ -7,6 +7,7 @@
 
 static TaskHandle_t taskHandle = nullptr;
 static volatile bool active = false;
+static int gain = 256;
 static RateState rate{};
 
 static void writeStereo(const int16_t *mono, size_t n) {
@@ -18,8 +19,11 @@ static void writeStereo(const int16_t *mono, size_t n) {
     size_t take = n - i;
     if (take > 256) take = 256;
     for (size_t s = 0; s < take; s++) {
-      stereo[s * 2] = mono[i + s];
-      stereo[s * 2 + 1] = mono[i + s];
+      int sample = ((int)mono[i + s] * gain) / 256;
+      if (sample > 32767) sample = 32767;
+      if (sample < -32768) sample = -32768;
+      stereo[s * 2] = (int16_t)sample;
+      stereo[s * 2 + 1] = (int16_t)sample;
     }
     size_t wrote = 0;
     i2s_channel_write(tx, stereo, take * 4, &wrote, pdMS_TO_TICKS(50));
@@ -48,6 +52,12 @@ static void task(void *) {
 bool audioOutBegin() {
   xTaskCreatePinnedToCore(task, "amp", 6144, nullptr, 4, &taskHandle, 1);
   return boardAmp() != nullptr;
+}
+
+void audioGainStep(int direction) {
+  gain += direction * 64;
+  if (gain < 64) gain = 64;
+  if (gain > 512) gain = 512;
 }
 
 void audioOutSetActive(bool on) {

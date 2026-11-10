@@ -61,6 +61,8 @@ struct BoardProfile {
   int setupPin;
   int headphonePin;
   bool detectCodec;
+  int volDownPin;
+  int volUpPin;
 };
 
 const BoardProfile &boardProfile();

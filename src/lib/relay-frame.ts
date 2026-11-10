@@ -6,7 +6,7 @@ export type RelayPub = {
   payload: string
 }
 
-export type DeviceCredentials = { id: string; token: string }
+export type DeviceCredentials = { id: string; token: string; listenOnly: boolean; rate: number }
 export type RelayHello = { op: 'hello'; device?: DeviceCredentials }
 export type RelayMsg = { op: 'msg'; topic: string; encoding: 'utf8' | 'base64'; payload: string }
 export type RelayErr = { op: 'err'; message: string }
@@ -34,11 +34,11 @@ export function decodeWire(encoding: string, payload: string): Uint8Array | null
 
 function deviceCredentials(value: unknown): DeviceCredentials | null {
   if (!value || typeof value !== 'object') return null
-  const raw = value as { id?: unknown; token?: unknown }
+  const raw = value as { id?: unknown; token?: unknown; listenOnly?: unknown; rate?: unknown }
   if (typeof raw.id !== 'string' || typeof raw.token !== 'string') return null
   const id = raw.id.trim()
   if (id.length < 2 || id.length > 40 || raw.token.length < 8 || raw.token.length > 200) return null
-  return { id, token: raw.token }
+  return { id, token: raw.token, listenOnly: raw.listenOnly === true, rate: raw.rate === 8000 ? 8000 : 12000 }
 }
 
 export function parseClientFrame(raw: string): RelayHello | RelayPub | null {

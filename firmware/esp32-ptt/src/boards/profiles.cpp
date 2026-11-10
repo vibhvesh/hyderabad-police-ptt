@@ -13,6 +13,7 @@ static const BoardProfile kXiao = {
   -1,
   6, 2.f, 3.30f, 4.20f,
   -1, -1, 1, -1, false,
+  -1, -1,
 };
 
 // Boondock kit. Pins are the ES8388 v1 map until boardPrepareCodec probes the chip.
@@ -31,6 +32,7 @@ static const BoardProfile kA1s = {
   -1,
   34, 2.f, 3.30f, 4.20f,
   19, 5, 19, 39, true,
+  -1, -1,
 };
 
 // NodeMCU-32S is an ESP32-WROOM-32 dev board. No PSRAM. Same mic and amp chips as the XIAO.
@@ -48,6 +50,7 @@ static const BoardProfile kNodeMcu32s = {
   -1,
   34, 2.f, 3.30f, 4.20f,
   -1, -1, 4, -1, false,
+  16, 17,
 };
 
 static const BoardProfile kLyrat = {
@@ -63,6 +66,7 @@ static const BoardProfile kLyrat = {
   -1,
   -1, 2.f, 3.30f, 4.20f,
   -1, -1, 36, -1, false,
+  -1, -1,
 };
 
 static const BoardProfile kKorvo = {
@@ -78,6 +82,7 @@ static const BoardProfile kKorvo = {
   -1,
   -1, 2.f, 3.30f, 4.20f,
   -1, -1, 0, -1, false,
+  -1, -1,
 };
 
 static BoardProfile gLive = kA1s;

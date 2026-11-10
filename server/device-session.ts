@@ -5,7 +5,7 @@ import { LivePlayout } from '../src/lib/playback.ts'
 import { decodeWire, encodeWire } from '../src/lib/relay-frame.ts'
 import { relayUrl } from '../src/lib/relay-transport.ts'
 
-export type HandsetAuth = { id: string; token: string; name: string }
+export type HandsetAuth = { id: string; token: string; name: string; listenOnly?: boolean; rate?: number }
 export type HandsetReady = { id: string; lineId: string; name: string }
 
 /** Node stand-in for the ESP32 handset. It speaks the same WebSocket relay as the firmware. */
@@ -53,7 +53,10 @@ export class DeviceHandset {
       }
       const timer = setTimeout(() => finish(new Error('Handset hello timed out')), 4_000)
       socket.addEventListener('open', () => {
-        socket.send(JSON.stringify({ op: 'hello', device: { id: this.auth.id, token: this.auth.token } }))
+        const device: { id: string; token: string; listenOnly?: boolean; rate?: number } = { id: this.auth.id, token: this.auth.token }
+        if (this.auth.listenOnly) device.listenOnly = true
+        if (this.auth.rate) device.rate = this.auth.rate
+        socket.send(JSON.stringify({ op: 'hello', device }))
       })
       socket.addEventListener('error', () => finish(new Error('Handset socket failed')))
       socket.addEventListener('close', () => {
@@ -108,6 +111,7 @@ export class DeviceHandset {
       rssi: report.rssi,
       voltage: report.voltage,
       charging: false,
+      ...(this.auth.listenOnly ? { listenOnly: true } : {}),
     }), true)
   }
 
@@ -186,7 +190,7 @@ export class DeviceHandset {
     if (rest !== 'audio') return
     const decoded = decodeAudio(payload)
     if (!decoded || decoded.id === this.auth.id) return
-    if (!this.floor || this.floor.id !== decoded.id) return
+    if (!this.auth.listenOnly && (!this.floor || this.floor.id !== decoded.id)) return
     this.raw.push(new Int16Array(decoded.pcm))
     for (const item of this.playout.push(decoded.seq, decoded.pcm, () => undefined)) this.played.push(item.pcm)
   }

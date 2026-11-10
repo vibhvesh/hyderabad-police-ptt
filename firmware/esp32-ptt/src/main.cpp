@@ -53,14 +53,19 @@ static void sendPresence() {
   if (!wsOnline() || !wsTimeReady()) return;
   BatteryReport bat = batteryRead();
   char json[240];
+#ifdef LISTEN_ONLY
+  const char *mode = ",\"listenOnly\":true";
+#else
+  const char *mode = "";
+#endif
   if (bat.percent >= 0) {
     snprintf(json, sizeof(json),
-             "{\"id\":\"%s\",\"name\":\"%s\",\"ts\":%llu,\"kind\":\"handset\",\"battery\":%d,\"voltage\":%.2f,\"rssi\":%d,\"charging\":false}",
-             selfId, cfg.name.c_str(), (unsigned long long)epochMs(), bat.percent, bat.voltage, wsRssi());
+             "{\"id\":\"%s\",\"name\":\"%s\",\"ts\":%llu,\"kind\":\"handset\",\"battery\":%d,\"voltage\":%.2f,\"rssi\":%d,\"charging\":false%s}",
+             selfId, cfg.name.c_str(), (unsigned long long)epochMs(), bat.percent, bat.voltage, wsRssi(), mode);
   } else {
     snprintf(json, sizeof(json),
-             "{\"id\":\"%s\",\"name\":\"%s\",\"ts\":%llu,\"kind\":\"handset\",\"rssi\":%d}",
-             selfId, cfg.name.c_str(), (unsigned long long)epochMs(), wsRssi());
+             "{\"id\":\"%s\",\"name\":\"%s\",\"ts\":%llu,\"kind\":\"handset\",\"rssi\":%d%s}",
+             selfId, cfg.name.c_str(), (unsigned long long)epochMs(), wsRssi(), mode);
   }
   char path[96];
   snprintf(path, sizeof(path), "presence/%s", selfId);
@@ -105,7 +110,9 @@ void setup() {
   jitterBegin();
   buttonBegin();
   if (!boardAudioBegin()) Serial.println("Board audio did not start");
+#ifndef LISTEN_ONLY
   if (!audioInBegin()) Serial.println("Mic did not start");
+#endif
   if (!audioOutBegin()) Serial.println("Amp did not start");
   wsOnAudio(onAudio);
   wsOnJson(onJson);
@@ -114,6 +121,10 @@ void setup() {
   ledSet(LED_CONNECTING);
   idleSince = millis();
 }
+
+#ifdef LISTEN_ONLY
+static void pollVolume();
+#endif
 
 void loop() {
   unsigned long now = millis();
@@ -136,6 +147,9 @@ void loop() {
     return;
   }
   uint64_t clock = epochMs();
+#ifdef LISTEN_ONLY
+  pollVolume();
+#else
   if (buttonPressedEdge() && wsOnline()) floorPress(clock);
   if (buttonReleasedEdge()) txUntil = clock + TAIL_MS;
   floorTick(clock);
@@ -163,6 +177,7 @@ void loop() {
       ledSet(LED_ONLINE);
     }
   }
+#endif
   if (!jitterIdle()) {
     audioOutSetActive(true);
     idleSince = now;
@@ -184,3 +199,23 @@ void loop() {
   }
   delay(5);
 }
+
+#ifdef LISTEN_ONLY
+static void pollVolume() {
+  const BoardProfile &board = boardProfile();
+  static bool downWas = false;
+  static bool upWas = false;
+  if (board.volDownPin >= 0) {
+    pinMode(board.volDownPin, INPUT_PULLUP);
+    bool down = digitalRead(board.volDownPin) == LOW;
+    if (down && !downWas) audioGainStep(-1);
+    downWas = down;
+  }
+  if (board.volUpPin >= 0) {
+    pinMode(board.volUpPin, INPUT_PULLUP);
+    bool up = digitalRead(board.volUpPin) == LOW;
+    if (up && !upWas) audioGainStep(1);
+    upWas = up;
+  }
+}
+#endif

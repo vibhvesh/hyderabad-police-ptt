@@ -178,6 +178,50 @@ describe('handset tokens', () => {
     handset.close()
     await app.close()
   })
+
+  it('gives a listen-only handset 8 kHz audio and refuses its transmit', async () => {
+    const { app, base } = await boot()
+    await makeLine(base, 'gate')
+    const created = await fetch(`${base}/api/control/lines/gate/devices`, { method: 'POST', headers, body: JSON.stringify({ name: 'Speaker' }) })
+    const speaker = await created.json() as { id: string; token: string }
+    const phoneCreated = await fetch(`${base}/api/control/lines/gate/devices`, { method: 'POST', headers, body: JSON.stringify({ name: 'Phone set' }) })
+    const phoneDev = await phoneCreated.json() as { id: string; token: string }
+    const ear = new DeviceHandset(base, { id: speaker.id, token: speaker.token, name: 'Speaker', listenOnly: true, rate: 8000 })
+    await ear.connect()
+    ear.presence({ battery: 0, rssi: -70, voltage: 0 })
+    let phoneOnline = false
+    const phone = new Radio(new RelayWire(base), 'sanket-ptt/v1/gate/', {
+      state: () => undefined,
+      audio: () => undefined,
+      boundary: () => undefined,
+      net: (state) => {
+        phoneOnline = state.state === 'online'
+      },
+      lost: () => undefined,
+      notice: () => undefined,
+    }, 'phone01')
+    phone.start('Phone')
+    const deadline = Date.now() + 4_000
+    while (!phoneOnline && Date.now() < deadline) await delay(20)
+    const claimed = await new Promise<boolean>((resolve) => phone.claim(resolve))
+    expect(claimed).toBe(true)
+    const tone = chirp(0.1)
+    phone.sendAudio(tone)
+    const wait = Date.now() + 2_000
+    while (ear.rawSamples().length < 700 && Date.now() < wait) await delay(20)
+    const heard = ear.rawSamples().length
+    expect(heard).toBeGreaterThan(700)
+    expect(heard).toBeLessThan(900)
+    ear.sendRaw('sanket-ptt/v1/gate/audio', 'nope')
+    await delay(80)
+    expect(ear.errors.some((item) => item.includes('listen-only'))).toBe(true)
+    const listed = await fetch(`${base}/api/control/devices`, { headers }).then((response) => response.json()) as { devices: Array<{ id: string; listenOnly: boolean }> }
+    expect(listed.devices.find((item) => item.id === speaker.id)?.listenOnly).toBe(true)
+    expect(listed.devices.find((item) => item.id === phoneDev.id)?.listenOnly).toBe(false)
+    phone.stop()
+    ear.close()
+    await app.close()
+  })
 })
 
 function split(pcm: Int16Array, size: number): Int16Array[] {

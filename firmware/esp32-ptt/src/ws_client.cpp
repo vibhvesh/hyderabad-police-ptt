@@ -79,6 +79,9 @@ static void sendHello() {
   doc["op"] = "hello";
   doc["device"]["id"] = deviceId;
   doc["device"]["token"] = token;
+#ifdef LISTEN_ONLY
+  doc["device"]["listenOnly"] = true;
+#endif
   String body;
   serializeJson(doc, body);
   socket.sendTXT(body);

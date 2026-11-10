@@ -246,12 +246,16 @@ bool boardAudioBegin() {
   const BoardI2s &i2s = board.i2s;
   Serial.printf("Board %s\n", board.label);
   bool ok = true;
+#ifdef LISTEN_ONLY
+  ok = openChannel(i2s.txPort, i2s.bclk, i2s.ws, i2s.dout, -1, i2s.mclk, i2s.bits, true, &gTx, nullptr);
+#else
   if (i2s.duplex) {
     ok = openChannel(i2s.txPort, i2s.bclk, i2s.ws, i2s.dout, i2s.rxDin, i2s.mclk, i2s.bits, true, &gTx, &gRx);
   } else {
     ok = openChannel(i2s.rxPort, i2s.rxBclk, i2s.rxWs, -1, i2s.rxDin, -1, i2s.rxBits, false, nullptr, &gRx);
     ok = openChannel(i2s.txPort, i2s.bclk, i2s.ws, i2s.dout, -1, i2s.mclk, i2s.bits, true, &gTx, nullptr) && ok;
   }
+#endif
   if (board.i2cSda >= 0 && board.codec != BOARD_CODEC_NONE) {
     Wire.begin(board.i2cSda, board.i2cScl);
     Wire.setClock(100000);

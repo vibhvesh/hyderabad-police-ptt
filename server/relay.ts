@@ -1,11 +1,12 @@
 import type { WebSocket } from 'ws'
 import { topicAllowed } from '../src/lib/net.ts'
-import { decodeAudio } from '../src/lib/packets.ts'
+import { decodeAudio, encodeAudio } from '../src/lib/packets.ts'
+import { resamplePcm } from '../src/lib/pcm-rate.ts'
 import { decodeWire, encodeWire, parseClientFrame } from '../src/lib/relay-frame.ts'
 
 export type RelayTap = (topic: string, payload: Uint8Array) => void
 
-export type DevicePrincipal = { id: string; lineId: string; name: string }
+export type DevicePrincipal = { id: string; lineId: string; name: string; listenOnly: boolean; rate: number }
 
 export class Relay {
   readonly sent: Array<{ topic: string; text: string }> = []
@@ -15,10 +16,10 @@ export class Relay {
   private sessions = new Map<WebSocket, DevicePrincipal>()
   private links = new Map<string, number>()
   tap: RelayTap = () => {}
-  authenticate: (id: string, token: string) => DevicePrincipal | null = () => null
+  authenticate: (id: string, token: string) => { id: string; lineId: string; name: string } | null = () => null
   stillAllowed: (id: string) => boolean = () => false
   reserved: (id: string) => boolean = () => false
-  onLink: (id: string, online: boolean) => void = () => {}
+  onLink: (id: string, online: boolean, listenOnly?: boolean) => void = () => {}
 
   add(socket: WebSocket) {
     this.clients.add(socket)
@@ -39,12 +40,11 @@ export class Relay {
 
   publish(topic: string, payload: Uint8Array | string, retain = false) {
     if (!topicAllowed(topic)) return
+    const bytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload
     const wire = encodeWire(payload)
     const frame = JSON.stringify({ op: 'msg', topic, encoding: wire.encoding, payload: wire.payload })
     if (retain) this.retained.set(topic, frame)
-    for (const client of this.clients) {
-      if (client.readyState === 1) client.send(frame)
-    }
+    this.fanout(null, topic, frame, bytes)
     const text = typeof payload === 'string' ? payload : ''
     this.sent.push({ topic, text })
     if (topic.endsWith('/audio') && typeof payload !== 'string') {
@@ -52,7 +52,6 @@ export class Relay {
       if (this.audioFrames.length > 8) this.audioFrames.shift()
     }
     if (this.sent.length > 40) this.sent.shift()
-    const bytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload
     this.tap(topic, bytes)
   }
 
@@ -89,26 +88,43 @@ export class Relay {
     }
     const out = JSON.stringify({ op: 'msg', topic: frame.topic, encoding: frame.encoding, payload: frame.payload })
     if (frame.retain) this.retained.set(frame.topic, out)
-    for (const client of this.clients) {
-      if (client !== socket && client.readyState === 1) client.send(out)
-    }
+    this.fanout(socket, frame.topic, out, payload)
     const topic = frame.topic
     const copy = payload.slice()
     queueMicrotask(() => this.tap(topic, copy))
   }
 
-  private hello(socket: WebSocket, device: { id: string; token: string } | undefined) {
+  private hello(socket: WebSocket, device: { id: string; token: string; listenOnly: boolean; rate: number } | undefined) {
     if (device) {
-      const principal = this.authenticate(device.id, device.token)
-      if (!principal) {
+      const found = this.authenticate(device.id, device.token)
+      if (!found) {
         socket.send(JSON.stringify({ op: 'err', message: 'Device token was not accepted.' }))
         socket.close()
         return
       }
+      const principal: DevicePrincipal = { ...found, listenOnly: device.listenOnly, rate: device.rate }
       this.bind(socket, principal)
-      socket.send(JSON.stringify({ op: 'ready', device: { id: principal.id, lineId: principal.lineId, name: principal.name } }))
+      socket.send(JSON.stringify({
+        op: 'ready',
+        device: { id: principal.id, lineId: principal.lineId, name: principal.name, listenOnly: principal.listenOnly, rate: principal.rate },
+      }))
     }
     for (const retained of this.retained.values()) socket.send(retained)
+  }
+
+  private fanout(from: WebSocket | null, topic: string, frame: string, raw: Uint8Array) {
+    let slow: string[] | null = null
+    for (const client of this.clients) {
+      if (from && client === from) continue
+      if (client.readyState !== 1) continue
+      const prefs = this.sessions.get(client)
+      if (prefs?.rate === 8000 && topic.endsWith('/audio')) {
+        if (!slow) slow = slowAudioFrames(topic, raw)
+        for (const item of slow) client.send(item)
+        continue
+      }
+      client.send(frame)
+    }
   }
 
   private bind(socket: WebSocket, principal: DevicePrincipal) {
@@ -117,7 +133,7 @@ export class Relay {
     this.sessions.set(socket, principal)
     const count = (this.links.get(principal.id) ?? 0) + 1
     this.links.set(principal.id, count)
-    if (count === 1) this.onLink(principal.id, true)
+    if (count === 1) this.onLink(principal.id, true, principal.listenOnly)
   }
 
   private unbind(socket: WebSocket) {
@@ -136,6 +152,7 @@ export class Relay {
 
 export function devicePublishAllowed(topic: string, session: DevicePrincipal, payload: Uint8Array): string | null {
   const root = `sanket-ptt/v1/${session.lineId}/`
+  if (session.listenOnly && (topic === `${root}audio` || topic === `${root}floor`)) return 'This handset is listen-only.'
   if (!topic.startsWith(root)) return 'This handset is bound to another line.'
   const rest = topic.slice(root.length)
   if (rest === 'audio') {
@@ -154,6 +171,23 @@ export function devicePublishAllowed(topic: string, session: DevicePrincipal, pa
   }
   if (rest === `presence/${session.id}`) return null
   return 'This handset cannot publish that topic.'
+}
+
+function slowAudioFrames(topic: string, raw: Uint8Array): string[] {
+  const decoded = decodeAudio(raw)
+  if (!decoded) return []
+  const pcm = resamplePcm(decoded.pcm)
+  const frames: string[] = []
+  const step = 320
+  for (let offset = 0, part = 0; offset < pcm.length; offset += step, part++) {
+    const slice = pcm.subarray(offset, Math.min(pcm.length, offset + step))
+    const seq = (((decoded.seq ?? 0) * 16) + part) >>> 0
+    const packet = encodeAudio(decoded.id, slice, seq)
+    if (!packet) continue
+    const wire = encodeWire(packet)
+    frames.push(JSON.stringify({ op: 'msg', topic, encoding: wire.encoding, payload: wire.payload }))
+  }
+  return frames
 }
 
 function speakerOf(topic: string, payload: Uint8Array): string | null {

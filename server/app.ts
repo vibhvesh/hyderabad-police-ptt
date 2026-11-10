@@ -156,7 +156,7 @@ export function createApp(options: AppOptions = {}) {
     return !!line && line.enabled
   }
   relay.reserved = (id) => devices.reserved(id)
-  relay.onLink = (id, online) => monitor.linkDevice(id, online, now())
+  relay.onLink = (id, online, listenOnly) => monitor.linkDevice(id, online, now(), listenOnly)
   const sweepTimer = setInterval(() => monitor.sweep(now()), 400)
   const lookupImpl = options.lookupImpl
   const fetchImpl = options.fetchImpl
