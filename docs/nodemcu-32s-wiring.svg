@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="520" viewBox="0 0 920 520">
+  <rect width="920" height="520" fill="#f7f4ee"/>
+  <text x="24" y="36" font-family="sans-serif" font-size="20" fill="#0c3d82">NodeMCU-32S handset wiring</text>
+  <g font-family="sans-serif" font-size="13" fill="#1c1917">
+    <rect x="340" y="60" width="240" height="400" rx="8" fill="#fff" stroke="#0c3d82"/>
+    <text x="360" y="88" font-weight="700">NodeMCU-32S</text>
+    <text x="360" y="116">GPIO26  mic BCLK</text>
+    <text x="360" y="140">GPIO25  mic WS</text>
+    <text x="360" y="164">GPIO32  mic SD</text>
+    <text x="360" y="188">GPIO27  amp BCLK</text>
+    <text x="360" y="212">GPIO14  amp LRC</text>
+    <text x="360" y="236">GPIO13  amp DIN</text>
+    <text x="360" y="260">GPIO4   PTT button</text>
+    <text x="360" y="284">GPIO2   onboard LED</text>
+    <text x="360" y="308">GPIO34  battery sense</text>
+    <text x="360" y="332">3V3 and GND</text>
+    <text x="360" y="356">VIN from charger</text>
+    <text x="360" y="390">ESP32-WROOM-32</text>
+    <text x="360" y="414">No PSRAM on this module</text>
+    <rect x="40" y="80" width="250" height="150" rx="8" fill="#fff" stroke="#444"/>
+    <text x="56" y="108" font-weight="700">INMP441 mic</text>
+    <text x="56" y="132">SCK to GPIO26, WS to GPIO25</text>
+    <text x="56" y="156">SD to GPIO32, L/R to GND</text>
+    <text x="56" y="180">VDD 3V3, GND to GND</text>
+    <rect x="40" y="260" width="250" height="150" rx="8" fill="#fff" stroke="#444"/>
+    <text x="56" y="288" font-weight="700">MAX98357A and speaker</text>
+    <text x="56" y="312">BCLK GPIO27, LRC GPIO14, DIN GPIO13</text>
+    <text x="56" y="336">VIN 3V3, GND, SD tied to VIN</text>
+    <text x="56" y="360">GAIN to GND, speaker on + and -</text>
+    <rect x="630" y="80" width="260" height="220" rx="8" fill="#fff" stroke="#444"/>
+    <text x="646" y="108" font-weight="700">Button, LED, LiPo</text>
+    <text x="646" y="132">Button from GPIO4 to GND</text>
+    <text x="646" y="156">Blue LED is already on GPIO2</text>
+    <text x="646" y="180">Cell to TP4056 BAT pads</text>
+    <text x="646" y="204">OUT+ diode to VIN</text>
+    <text x="646" y="228">100k / 100k to GPIO34</text>
+    <text x="646" y="252">Schottky cathode toward VIN</text>
+    <text x="646" y="276">Flash from the board USB port</text>
+  </g>
+</svg>

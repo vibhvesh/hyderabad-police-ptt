@@ -160,9 +160,69 @@ Upload runs at 115200. Close the monitor before uploading. If the tool sits on "
 
 If it still fails, unplug the headphones and the speaker, then try again. The codec can load GPIO0.
 
+## NodeMCU-32S
+
+This is the ESP32 DevKit sold as NodeMCU-32S, with an ESP32-WROOM-32. It has 4 MB of flash and no PSRAM. The jitter buffer uses internal RAM, which is enough for 12 kHz. Build it with `pio run -e nodemcu-32s`. The mic and the amp are the same parts as the XIAO, on two separate I2S ports.
+
+| GPIO | Connects to |
+| --- | --- |
+| 26 | INMP441 SCK |
+| 25 | INMP441 WS |
+| 32 | INMP441 SD |
+| 27 | MAX98357A BCLK |
+| 14 | MAX98357A LRC |
+| 13 | MAX98357A DIN |
+| 4 | Push-to-talk button, other side to GND. Internal pull-up. Pressed is low. |
+| 2 | Onboard LED, active low. No wire unless that LED is missing. |
+| 34 | Midpoint of the battery divider. Input only. |
+| 3V3 | INMP441 VDD and MAX98357A VIN |
+| GND | All grounds, INMP441 L/R, MAX98357A GND and GAIN |
+| VIN | TP4056 OUT+ through a Schottky diode, band toward the board |
+
+Tie MAX98357A SD to VIN so the amp stays on. Tie GAIN to GND for the lower gain. GPIO34 cannot drive a pin, so the battery wire is sense only:
+
+```text
+cell + ---- 100k ---- GPIO34 ---- 100k ---- GND
+                       |
+                      100 nF
+                       |
+                      GND
+```
+
+The two resistors must match. The firmware doubles the ADC reading. GPIO34 is on ADC1, so Wi-Fi does not steal the measurement.
+
+```text
+LiPo + and -   ->  TP4056 BAT pads
+TP4056 OUT+    ->  Schottky anode
+Schottky cathode -> NodeMCU VIN
+TP4056 OUT-    ->  GND
+```
+
+Charge from the TP4056 USB socket. Flash from the NodeMCU USB socket. The diode keeps the board's 5 V from feeding the charger output.
+
+Diagram: [nodemcu-32s-wiring.svg](nodemcu-32s-wiring.svg).
+
+```sh
+cd firmware/esp32-ptt
+pio run -e nodemcu-32s -t upload
+pio device monitor
+```
+
+Hold BOOT, tap EN, and release BOOT if the upload does not start. Leave GPIO0, GPIO12, and GPIO15 unwired. Those pins decide the boot mode.
+
+Hold the GPIO4 button for about 3 seconds from power-up to open the setup page.
+
+### ESP8266 NodeMCU is not supported
+
+The older NodeMCU v2 and v3 boards use an ESP8266. This firmware does not build for them.
+
+The ESP8266 I2S block can play audio out. It has no I2S input, so an INMP441 cannot be read as a microphone. Bit-banging the mic drops samples and still leaves no second clock for the amplifier. The chip has about 80 KB of RAM. After Wi-Fi, what remains is too small for a TLS WebSocket, the certificate check, and a jitter buffer at the same time. A build that connected and then stuttered or reset would look like a working handset and would not be one.
+
+Use a NodeMCU-32S for this wiring. The env name is `nodemcu-32s`.
+
 ## Other boards
 
-`src/boards/profiles.cpp` still has the XIAO, the LyraT v4.3, and the ESP32-S3-Korvo-2. Build one of those with `-e`:
+The XIAO, the LyraT v4.3, and the ESP32-S3-Korvo-2 are still in `src/boards/profiles.cpp`. Build one of those with `-e`:
 
 ```sh
 pio run -e xiao_esp32s3_inmp441_max98357a
@@ -173,6 +233,7 @@ pio run -e s3_korvo2_es8311
 | Env | Board |
 | --- | --- |
 | `esp32-a1s` | AI-Thinker ESP32-A1S Audio Kit. Default. Classic ESP32, 4 MB flash, 8 MB PSRAM. |
+| `nodemcu-32s` | NodeMCU-32S with an INMP441, a MAX98357A, a button, the onboard LED, and a battery divider on GPIO34. |
 | `xiao_esp32s3_inmp441_max98357a` | Seeed XIAO ESP32-S3 with the INMP441 and MAX98357A wired above. |
 | `lyrat_v43_es8388` | ESP32-LyraT v4.3, ES8388, I2C 18/23, BCLK 5. |
 | `s3_korvo2_es8311` | ESP32-S3-Korvo-2. ES8311 speaker, ES7210 mics. BOOT is push-to-talk. |
@@ -188,7 +249,7 @@ The XIAO upload is `pio run -e xiao_esp32s3_inmp441_max98357a -t upload`. Hold i
 5. Leave "Skip certificate check" off. The firmware trusts the Let's Encrypt ISRG Root X1, which is the root for `ptt.bowlinger.net`.
 6. Save. The handset restarts and joins the Wi-Fi.
 
-To change the network later, hold the push-to-talk button while it boots, for about 3 seconds. On the Audio Kit that is KEY3 or the button on header IO19. That opens the setup access point again.
+To change the network later, hold the push-to-talk button while it boots, for about 3 seconds. On the Audio Kit that is KEY3 or the button on header IO19. On the NodeMCU-32S it is the button on GPIO4. That opens the setup access point again.
 
 The server must be the build that knows about handsets. On the self-hosted machine, rebuild only after you mean to:
 
@@ -218,6 +279,7 @@ docker run -d --name sanket-ptt --restart unless-stopped -p 8010:8010 \
 | The speaker stays quiet and headphones work | A plugged-in jack mutes the amplifier on purpose. Unplug the jack. |
 | The XIAO battery percent is nonsense | The divider must be two equal resistors from the cell to GPIO6. |
 | The Audio Kit battery stays blank | The stock board does not wire the cell to an ADC. Add the 100k/100k divider to GPIO34. |
-| Setup page does not appear | On the Audio Kit, hold KEY3 or the IO19 button for 3 seconds from power-up. On the XIAO, hold the PTT button the same way. Join `Sanket-Setup`, then open `http://192.168.4.1`. |
+| Setup page does not appear | On the Audio Kit, hold KEY3 or the IO19 button for 3 seconds from power-up. On the NodeMCU-32S or the XIAO, hold the push-to-talk button the same way. Join `Sanket-Setup`, then open `http://192.168.4.1`. |
+| NodeMCU upload never starts | Hold BOOT, tap EN, release BOOT. The env is `nodemcu-32s`. An ESP8266 NodeMCU cannot run this firmware. |
 | Upload to the Audio Kit never connects | Hold IO0 to ground, tap reset, then release IO0. Use `pio run -e esp32-a1s -t upload`. |
 | TLS fails and the site is still Let's Encrypt | Uncheck skip-certificate only after the root in `include/ca_store.h` is ISRG Root X1. A different certificate needs that file updated. |

@@ -33,6 +33,23 @@ static const BoardProfile kA1s = {
   19, 5, 19, 39, true,
 };
 
+// NodeMCU-32S is an ESP32-WROOM-32 dev board. No PSRAM. Same mic and amp chips as the XIAO.
+// Two I2S ports so the mic and the amp do not share a clock. GPIO34 is ADC1, so Wi-Fi does not block the battery reading.
+static const BoardProfile kNodeMcu32s = {
+  "nodemcu-32s",
+  "NodeMCU-32S, INMP441, MAX98357A",
+  {1, 27, 14, 13, -1, 16, false, 0, 26, 25, 32, 32},
+  BOARD_CODEC_NONE,
+  BOARD_ADC_NONE,
+  -1, -1, 0, 0,
+  -1, true,
+  4, true, true,
+  2, true,
+  -1,
+  34, 2.f, 3.30f, 4.20f,
+  -1, -1, 4, -1, false,
+};
+
 static const BoardProfile kLyrat = {
   "lyrat_v43_es8388",
   "ESP32-LyraT v4.3, ES8388",
@@ -70,6 +87,8 @@ const BoardProfile &boardProfile() {
   if (!gReady) {
 #if defined(BOARD_XIAO_INMP441)
     gLive = kXiao;
+#elif defined(BOARD_NODEMCU_32S)
+    gLive = kNodeMcu32s;
 #elif defined(BOARD_LYRAT_ES8388)
     gLive = kLyrat;
 #elif defined(BOARD_S3_KORVO2_ES8311)
