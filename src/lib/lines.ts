@@ -1,3 +1,5 @@
+import type { VoiceChoice } from './voice-choice.ts'
+
 export type LineLang = 'te' | 'en' | 'hi'
 
 export type LineRecord = {
@@ -6,6 +8,8 @@ export type LineRecord = {
   enabled: boolean
   sourceLang: LineLang
   targetLang: LineLang
+  ttsProvider: VoiceChoice
+  asrProvider: VoiceChoice
   createdAt: string
   updatedAt: string
 }
@@ -32,6 +36,8 @@ export function defaultLine(nowIso: string): LineRecord {
     enabled: true,
     sourceLang: 'te',
     targetLang: 'en',
+    ttsProvider: 'free',
+    asrProvider: 'free',
     createdAt: nowIso,
     updatedAt: nowIso,
   }

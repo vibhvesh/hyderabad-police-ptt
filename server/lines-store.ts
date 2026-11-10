@@ -1,4 +1,5 @@
 import { defaultLine, lineId, lineLang, type LineRecord } from '../src/lib/lines.ts'
+import { voiceChoice } from '../src/lib/voice-choice.ts'
 import { readJsonFile, writeJsonFile } from './json-file.ts'
 
 export class LinesStore {
@@ -22,7 +23,7 @@ export class LinesStore {
     return this.lines.find((line) => line.id === id) ?? null
   }
 
-  create(input: { id: string; name: string; sourceLang?: unknown; targetLang?: unknown }): LineRecord | { error: string } {
+  create(input: { id: string; name: string; sourceLang?: unknown; targetLang?: unknown; ttsProvider?: unknown; asrProvider?: unknown }): LineRecord | { error: string } {
     const id = lineId(input.id)
     if (!id) return { error: 'Line ids use letters, numbers, and hyphens.' }
     if (this.get(id)) return { error: 'That line already exists.' }
@@ -34,6 +35,8 @@ export class LinesStore {
       enabled: true,
       sourceLang: lineLang(input.sourceLang, 'te'),
       targetLang: lineLang(input.targetLang, 'en'),
+      ttsProvider: voiceChoice(input.ttsProvider, 'free'),
+      asrProvider: voiceChoice(input.asrProvider, 'free'),
       createdAt: now,
       updatedAt: now,
     }
@@ -42,7 +45,7 @@ export class LinesStore {
     return line
   }
 
-  update(id: string, patch: { name?: unknown; enabled?: unknown; sourceLang?: unknown; targetLang?: unknown }): LineRecord | { error: string } {
+  update(id: string, patch: { name?: unknown; enabled?: unknown; sourceLang?: unknown; targetLang?: unknown; ttsProvider?: unknown; asrProvider?: unknown }): LineRecord | { error: string } {
     const current = this.get(id)
     if (!current) return { error: 'No such line.' }
     const next: LineRecord = {
@@ -51,6 +54,8 @@ export class LinesStore {
       enabled: typeof patch.enabled === 'boolean' ? patch.enabled : current.enabled,
       sourceLang: patch.sourceLang === undefined ? current.sourceLang : lineLang(patch.sourceLang, current.sourceLang),
       targetLang: patch.targetLang === undefined ? current.targetLang : lineLang(patch.targetLang, current.targetLang),
+      ttsProvider: patch.ttsProvider === undefined ? current.ttsProvider : voiceChoice(patch.ttsProvider, current.ttsProvider),
+      asrProvider: patch.asrProvider === undefined ? current.asrProvider : voiceChoice(patch.asrProvider, current.asrProvider),
       updatedAt: this.nowIso(),
     }
     this.lines = this.lines.map((line) => (line.id === id ? next : line))
@@ -87,6 +92,8 @@ function normalize(value: unknown): LineRecord | null {
     enabled: raw.enabled !== false,
     sourceLang: lineLang(raw.sourceLang, 'te'),
     targetLang: lineLang(raw.targetLang, 'en'),
+    ttsProvider: voiceChoice(raw.ttsProvider, 'free'),
+    asrProvider: voiceChoice(raw.asrProvider, 'free'),
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : now,
   }

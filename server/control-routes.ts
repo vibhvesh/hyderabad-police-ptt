@@ -1,5 +1,5 @@
 import type http from 'node:http'
-import { lineId, lineTopic } from '../src/lib/lines.ts'
+import { lineId, lineTopic, type LineRecord } from '../src/lib/lines.ts'
 import type { ConsoleSettingsStore } from './console-settings.ts'
 import type { DeviceStore } from './devices.ts'
 import type { LinesStore } from './lines-store.ts'
@@ -19,6 +19,7 @@ type Deps = {
   send: (res: http.ServerResponse, status: number, body: unknown) => void
   jsonBody: (req: http.IncomingMessage, res: http.ServerResponse, limit: number) => Promise<Record<string, unknown> | null>
   admin: (req: http.IncomingMessage, res: http.ServerResponse) => boolean
+  testElevenLabs: () => Promise<{ ok: true } | { ok: false; message: string }>
 }
 
 export async function handleControl(req: http.IncomingMessage, res: http.ServerResponse, deps: Deps): Promise<boolean> {
@@ -47,6 +48,8 @@ export async function handleControl(req: http.IncomingMessage, res: http.ServerR
       name: String(body.name ?? ''),
       sourceLang: body.sourceLang,
       targetLang: body.targetLang,
+      ttsProvider: body.ttsProvider,
+      asrProvider: body.asrProvider,
     })
     if ('error' in created) {
       deps.send(res, 400, { error: 'line', message: created.error })
@@ -116,17 +119,18 @@ export async function handleControl(req: http.IncomingMessage, res: http.ServerR
   if (url.pathname === '/api/control/settings' && req.method === 'PUT') {
     const body = await deps.jsonBody(req, res, 8_192)
     if (!body) return true
-    const key = typeof body.elevenLabsApiKey === 'string' ? body.elevenLabsApiKey : undefined
     const view = deps.settings.update({
       asrProvider: body.asrProvider as 'none' | 'transformers' | 'whisper-cli' | 'mock' | undefined,
       translateProvider: body.translateProvider as 'none' | 'opus' | undefined,
       elevenLabsFallback: typeof body.elevenLabsFallback === 'boolean' ? body.elevenLabsFallback : undefined,
-      elevenLabsApiKey: key,
-      clearElevenLabsKey: body.elevenLabsApiKey === '',
       retentionDays: Number(body.retentionDays),
     })
     deps.log.retain(view.retentionDays, deps.now())
     deps.send(res, 200, view)
+    return true
+  }
+  if (req.method === 'POST' && url.pathname === '/api/control/elevenlabs/test') {
+    deps.send(res, 200, await deps.testElevenLabs())
     return true
   }
   if (req.method === 'GET' && (url.pathname === '/api/control/log' || url.pathname === '/api/control/log.csv' || url.pathname === '/api/control/log.txt')) {
@@ -156,8 +160,17 @@ function deviceViews(deps: Deps) {
   return deps.devices.list().map((device) => ({ ...device, ...deps.monitor.handset(device.id) }))
 }
 
-function viewLine(line: { id: string; name: string; enabled: boolean; sourceLang: string; targetLang: string }) {
-  return { ...line, topic: lineTopic(line.id) }
+function viewLine(line: LineRecord) {
+  return {
+    id: line.id,
+    name: line.name,
+    enabled: line.enabled,
+    sourceLang: line.sourceLang,
+    targetLang: line.targetLang,
+    ttsProvider: line.ttsProvider,
+    asrProvider: line.asrProvider,
+    topic: lineTopic(line.id),
+  }
 }
 
 function queryOf(url: URL): ClipQuery {

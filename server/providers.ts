@@ -179,7 +179,7 @@ async function myMemory(
 
 export type TtsProvider = {
   status: () => ProviderStatus
-  speak: (text: string) => Promise<Int16Array | null>
+  speak: (text: string, channel?: string) => Promise<Int16Array | null>
 }
 
 export function createTts(config: Config): TtsProvider {

@@ -80,7 +80,7 @@ describe('lines and log', () => {
       headers,
       body: JSON.stringify({ name: 'North desk', enabled: false }),
     })
-    expect(await renamed.json()).toMatchObject({ name: 'North desk', enabled: false, topic: 'sanket-ptt/v1/north-1/' })
+    expect(await renamed.json()).toMatchObject({ name: 'North desk', enabled: false, topic: 'sanket-ptt/v1/north-1/', ttsProvider: 'free', asrProvider: 'free' })
     const secret = 'scribe-key-should-not-leak'
     const saved = await fetch(`${base}/api/control/settings`, {
       method: 'PUT',
@@ -88,10 +88,11 @@ describe('lines and log', () => {
       body: JSON.stringify({ asrProvider: 'none', translateProvider: 'opus', elevenLabsFallback: true, elevenLabsApiKey: secret, retentionDays: 7 }),
     })
     const view = await saved.json() as { elevenLabsConfigured?: boolean; elevenLabsApiKey?: string }
-    expect(view.elevenLabsConfigured).toBe(true)
+    expect(view.elevenLabsConfigured).toBe(false)
+    expect(view).not.toHaveProperty('elevenLabsApiKey')
     expect(JSON.stringify(view)).not.toContain(secret)
     const file = await readFile(path.join(dir, 'console', 'settings.json'), 'utf8')
-    expect(file).toContain(secret)
+    expect(file).not.toContain(secret)
     const listed = await fetch(`${base}/api/lines`).then((response) => response.json()) as { lines: Array<{ id: string }> }
     expect(listed.lines.some((line) => line.id === 'north-1')).toBe(false)
     await fetch(`${base}/api/control/lines/north-1`, { method: 'PATCH', headers, body: JSON.stringify({ enabled: true }) })

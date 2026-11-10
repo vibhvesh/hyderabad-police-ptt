@@ -96,7 +96,7 @@ export class AssistantRuntime {
     const citation = this.citations.get(job.id) ?? null
     const root = this.roots.get(channel) ?? `sanket-ptt/v1/${channel}/`
     const answerId = job.id
-    const pcm = await this.tts.speak(text)
+    const pcm = await this.tts.speak(text, channel)
     if (pcm && pcm.length) {
       const ts = this.now()
       this.relay.publish(root + 'floor', JSON.stringify({ t: 'claim', id: ASSISTANT_ID, name: ASSISTANT_NAME, ts }))
