@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PcmRing, buildWav, concatInt16, downsampleToPcm } from '../lib/audio.ts'
+import { LivePlayout, pcmToContextFloat } from '../lib/playback.ts'
 import {
   CLIP_GAP_MS,
   MAX_CLIP_MS,
@@ -110,7 +111,8 @@ export function usePtt() {
   const lastRxRef = useRef(0)
   const ringRef = useRef(new PcmRing(Math.round((PRE_ROLL_MS / 1000) * SAMPLE_RATE)))
   const acRef = useRef<AudioContext | null>(null)
-  const playAtRef = useRef(0)
+  const playoutRef = useRef<LivePlayout | null>(null)
+  const playSpeakerRef = useRef('')
   const streamRef = useRef<MediaStream | null>(null)
   const geoWatchRef = useRef<number | null>(null)
   const onPcmRef = useRef<(input: Float32Array, sampleRate: number) => void>(() => {})
@@ -252,19 +254,22 @@ export function usePtt() {
     sendChunk(pcm)
   }
 
-  function playPcm(pcm: Int16Array) {
+  function playPcm(pcm: Int16Array, seq: number | null, speakerId: string) {
     const ac = acRef.current
     if (!ac || ac.state !== 'running' || pcm.length === 0) return
-    const buffer = ac.createBuffer(1, pcm.length, SAMPLE_RATE)
-    const channel = buffer.getChannelData(0)
-    for (let i = 0; i < pcm.length; i++) channel[i] = (pcm[i] ?? 0) / 32768
-    const source = ac.createBufferSource()
-    source.buffer = buffer
-    source.connect(ac.destination)
-    const now = ac.currentTime
-    if (playAtRef.current < now || playAtRef.current > now + 0.8) playAtRef.current = now + 0.12
-    source.start(playAtRef.current)
-    playAtRef.current += buffer.duration
+    if (!playoutRef.current || playSpeakerRef.current !== speakerId) {
+      playoutRef.current = new LivePlayout(SAMPLE_RATE, () => ac.currentTime)
+      playSpeakerRef.current = speakerId
+    }
+    playoutRef.current.push(seq, pcm, (chunk, when) => {
+      const floats = pcmToContextFloat(chunk, SAMPLE_RATE, ac.sampleRate)
+      const buffer = ac.createBuffer(1, floats.length, ac.sampleRate)
+      buffer.getChannelData(0).set(floats)
+      const source = ac.createBufferSource()
+      source.buffer = buffer
+      source.connect(ac.destination)
+      source.start(Math.max(when, ac.currentTime))
+    })
   }
 
   function unlock() {
@@ -473,9 +478,9 @@ export function usePtt() {
             ...prev,
           ].slice(0, 40))
         },
-        audio: (pcm, from: Speaker) => {
+        audio: (pcm, from: Speaker, seq) => {
           lastRxRef.current = Date.now()
-          playPcm(pcm)
+          playPcm(pcm, seq, from.id)
           if (from.id === ASSISTANT_ID) return
           const now = Date.now()
           const open = rxRef.current

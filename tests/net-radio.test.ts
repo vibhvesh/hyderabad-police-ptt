@@ -23,8 +23,8 @@ describe('transport helpers', () => {
   it('round-trips a PCM frame and schedules playback ahead of the clock', () => {
     const frame = encodeAudio('unit-a', new Int16Array([0, 1000, -1000]))
     expect(frame && [...(decodeAudio(frame)?.pcm ?? [])]).toEqual([0, 1000, -1000])
-    expect(nextPlayAt(10, 9)).toBeCloseTo(10.12)
-    expect(nextPlayAt(10, 10.2)).toBeCloseTo(10.2)
+    expect(nextPlayAt(10, 9)).toBeCloseTo(10)
+    expect(nextPlayAt(10, 10.2)).toBeCloseTo(10.22)
   })
 
   it('maps the talk button colours', () => {

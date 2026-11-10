@@ -56,6 +56,8 @@ export class Relay {
     for (const client of this.clients) {
       if (client !== socket && client.readyState === 1) client.send(out)
     }
-    this.tap(frame.topic, payload)
+    const topic = frame.topic
+    const copy = payload.slice()
+    queueMicrotask(() => this.tap(topic, copy))
   }
 }

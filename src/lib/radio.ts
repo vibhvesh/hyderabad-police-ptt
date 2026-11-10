@@ -15,7 +15,7 @@ export type Speaker = { id: string; name: string; loc: GeoFix | null }
 
 type Handlers = {
   state: (view: RadioView) => void
-  audio: (pcm: Int16Array, from: Speaker) => void
+  audio: (pcm: Int16Array, from: Speaker, seq: number | null) => void
   boundary: () => void
   net: (net: NetSnapshot) => void
   lost: () => void
@@ -38,7 +38,8 @@ export class Radio {
   private timer: number | null = null
   private lastBeat = 0
   private claimTimer: number | null = null
-  private recentAudio: string[] = []
+  private recentSeq: string[] = []
+  private audioSeq = 0
   private stopped = false
 
   private wire: Wire
@@ -111,7 +112,7 @@ export class Radio {
 
   sendAudio(pcm: Int16Array): boolean {
     if (!this.talking || this.floor?.id !== this.id) return false
-    const frame = encodeAudio(this.id, pcm)
+    const frame = encodeAudio(this.id, pcm, this.audioSeq++)
     if (!frame) return false
     return this.wire.publish(this.topic('audio'), frame)
   }
@@ -241,11 +242,13 @@ export class Radio {
     if (!decoded) return
     const floor = this.floor
     if (!floor || decoded.id === this.id || floor.id !== decoded.id) return
-    const hash = `${decoded.id}:${raw.length}:${raw[1]}:${raw[raw.length - 1]}`
-    if (this.recentAudio.includes(hash)) return
-    this.recentAudio = [...this.recentAudio, hash].slice(-32)
+    if (decoded.seq != null) {
+      const key = `${decoded.id}:${decoded.seq}`
+      if (this.recentSeq.includes(key)) return
+      this.recentSeq = [...this.recentSeq, key].slice(-64)
+    }
     floor.seen = now
-    this.handlers.audio(decoded.pcm, { id: decoded.id, name: floor.name, loc: floor.loc })
+    this.handlers.audio(decoded.pcm, { id: decoded.id, name: floor.name, loc: floor.loc }, decoded.seq)
   }
 }
 

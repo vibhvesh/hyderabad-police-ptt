@@ -1,25 +1,35 @@
-export function encodeAudio(id: string, pcm: Int16Array): Uint8Array | null {
+export function encodeAudio(id: string, pcm: Int16Array, seq?: number): Uint8Array | null {
   const idBytes = new TextEncoder().encode(id)
   if (idBytes.length < 1 || idBytes.length > 80) return null
-  const body = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)
-  const out = new Uint8Array(1 + idBytes.length + body.length)
-  out[0] = idBytes.length
+  const versioned = seq !== undefined
+  const out = new Uint8Array(1 + idBytes.length + (versioned ? 4 : 0) + pcm.byteLength)
+  out[0] = idBytes.length | (versioned ? 0x80 : 0)
   out.set(idBytes, 1)
-  out.set(body, 1 + idBytes.length)
+  let offset = 1 + idBytes.length
+  if (versioned) {
+    new DataView(out.buffer).setUint32(offset, seq >>> 0, true)
+    offset += 4
+  }
+  out.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), offset)
   return out
 }
 
-export function decodeAudio(raw: Uint8Array): { id: string; pcm: Int16Array } | null {
+export function decodeAudio(raw: Uint8Array): { id: string; pcm: Int16Array; seq: number | null } | null {
   if (raw.length < 4) return null
-  const n = raw[0] ?? 0
-  if (n < 1 || n > 80 || raw.length < 1 + n + 2) return null
+  const marker = raw[0] ?? 0
+  const versioned = (marker & 0x80) !== 0
+  const n = marker & 0x7f
+  if (n < 1 || n > 80) return null
+  const pcmStart = 1 + n + (versioned ? 4 : 0)
+  if (raw.length < pcmStart + 2) return null
   const id = new TextDecoder().decode(raw.subarray(1, 1 + n))
   if (!id || id.includes('\u0000')) return null
-  const body = raw.subarray(1 + n)
+  const seq = versioned ? new DataView(raw.buffer, raw.byteOffset + 1 + n, 4).getUint32(0, true) : null
+  const body = raw.subarray(pcmStart)
   const even = body.length - (body.length % 2)
   const pcm = new Int16Array(even / 2)
   new Uint8Array(pcm.buffer).set(body.subarray(0, even))
-  return { id, pcm }
+  return { id, pcm, seq }
 }
 
 export type ChannelNotice = {
