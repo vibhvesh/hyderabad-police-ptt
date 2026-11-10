@@ -11,6 +11,7 @@ import {
 import { type GeoFix } from '../lib/format.ts'
 import { ASSISTANT_ID } from '../lib/assistant.ts'
 import { isExplicitQuestion } from '../lib/questions.ts'
+import { applyOutputSink } from '../lib/audio-route.ts'
 import { micErrorMessage } from '../lib/media-errors.ts'
 import { MqttWire } from '../lib/mqtt-transport.ts'
 import { DEFAULT_TOPIC_ROOT, safeTopicRoot } from '../lib/net.ts'
@@ -78,7 +79,9 @@ function hashLine(): string {
   }
 }
 
-export function usePtt() {
+export function usePtt(route: { inputId?: string; outputId?: string } = {}) {
+  const inputId = route.inputId ?? ''
+  const outputId = route.outputId ?? ''
   const [name, setNameState] = useState(loadName)
   const [lineId, setLineId] = useState(hashLine)
   const [lines, setLines] = useState<PublicLine[]>([])
@@ -122,11 +125,17 @@ export function usePtt() {
   const playoutRef = useRef<LivePlayout | null>(null)
   const playSpeakerRef = useRef('')
   const streamRef = useRef<MediaStream | null>(null)
+  const requestedInputRef = useRef<string | null>(null)
+  const inputIdRef = useRef(inputId)
+  const outputIdRef = useRef(outputId)
+  const graphRef = useRef<{ source: MediaStreamAudioSourceNode; processor: ScriptProcessorNode; mute: GainNode } | null>(null)
   const geoWatchRef = useRef<number | null>(null)
   const onPcmRef = useRef<(input: Float32Array, sampleRate: number) => void>(() => {})
 
   nameRef.current = name
   locRef.current = loc
+  inputIdRef.current = inputId
+  outputIdRef.current = outputId
 
   function applyCaption(caption: ServerCaption) {
     setMessages((prev) => {
@@ -280,11 +289,17 @@ export function usePtt() {
     })
   }
 
+  function routeOutput(ac: AudioContext) {
+    const sink = ac as AudioContext & { setSinkId?: (sinkId: string) => Promise<void> }
+    void applyOutputSink(sink, outputIdRef.current)
+  }
+
   function unlock() {
     const AudioCtx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!AudioCtx) return
     if (!acRef.current) acRef.current = new AudioCtx()
     const ac = acRef.current
+    routeOutput(ac)
     void ac.resume().then(() => {
       if (ac.state === 'running') setSoundOn(true)
     })
@@ -321,9 +336,19 @@ export function usePtt() {
     )
   }
 
-  async function ensureMic() {
+  function closeMicGraph() {
+    const graph = graphRef.current
+    graphRef.current = null
+    if (!graph) return
+    graph.processor.onaudioprocess = null
+    graph.source.disconnect()
+    graph.processor.disconnect()
+    graph.mute.disconnect()
+  }
+
+  async function openMic(deviceId: string) {
     unlock()
-    if (streamRef.current) return true
+    if (streamRef.current && requestedInputRef.current === deviceId) return true
     if (!window.isSecureContext) {
       setMicError(micErrorMessage(null, false))
       return false
@@ -332,11 +357,17 @@ export function usePtt() {
       setMicError('This browser has no microphone API.')
       return false
     }
+    requestedInputRef.current = deviceId
+    const audio: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+    if (deviceId) audio.deviceId = { exact: deviceId }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-        video: false,
-      })
+      const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false })
+      if (requestedInputRef.current !== deviceId) {
+        stream.getTracks().forEach((track) => track.stop())
+        return false
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      closeMicGraph()
       streamRef.current = stream
       const ac = acRef.current
       if (!ac) return false
@@ -350,12 +381,21 @@ export function usePtt() {
       processor.onaudioprocess = (event) => {
         onPcmRef.current(event.inputBuffer.getChannelData(0), event.inputBuffer.sampleRate)
       }
+      graphRef.current = { source, processor, mute }
       setMicError(null)
       return true
     } catch (error) {
+      if (requestedInputRef.current === deviceId) requestedInputRef.current = null
       setMicError(micErrorMessage(error, window.isSecureContext))
       return false
     }
+  }
+
+  const openMicRef = useRef(openMic)
+  openMicRef.current = openMic
+
+  async function ensureMic() {
+    return openMic(inputIdRef.current)
   }
 
   async function down() {
@@ -559,6 +599,7 @@ export function usePtt() {
         geoWatchRef.current = null
       }
       streamRef.current?.getTracks().forEach((track) => track.stop())
+      closeMicGraph()
       streamRef.current = null
       cancelled = true
       radio?.stop()
@@ -566,6 +607,18 @@ export function usePtt() {
     // Restart the radio when the selected line changes. Handlers read refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineId])
+
+  useEffect(() => {
+    const ac = acRef.current
+    if (!ac) return
+    const sink = ac as AudioContext & { setSinkId?: (sinkId: string) => Promise<void> }
+    void applyOutputSink(sink, outputId)
+  }, [outputId])
+
+  useEffect(() => {
+    if (!streamRef.current || requestedInputRef.current === inputId) return
+    void openMicRef.current(inputId)
+  }, [inputId])
 
   const floor = radioState.floor
   const me = radioState.me

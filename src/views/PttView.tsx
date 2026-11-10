@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { MessageList } from '@/components/MessageList'
 import { Button } from '@/components/ui/button'
+import { useAudioRoute } from '@/hooks/useAudioRoute'
 import { usePtt, type Phase } from '@/hooks/usePtt'
 import { shouldEndHold } from '@/lib/hold'
 import { PHASE_CLASS, PHASE_LABEL } from '@/lib/phase'
 import { cn } from '@/lib/utils'
+import { AudioRouteBar } from '@/views/talk/AudioRouteBar'
 
 function detailFor(phase: Phase, talker: string | null, holdLeft: number | null) {
   if (phase === 'talking') return holdLeft == null ? 'You are transmitting' : `You are transmitting · ${holdLeft}s left`
@@ -16,7 +18,8 @@ function detailFor(phase: Phase, talker: string | null, holdLeft: number | null)
 }
 
 export function PttView() {
-  const ptt = usePtt()
+  const route = useAudioRoute()
+  const ptt = usePtt({ inputId: route.inputId, outputId: route.outputId })
   const [nameOpen, setNameOpen] = useState(false)
   const label = PHASE_LABEL[ptt.phase]
   return (
@@ -32,6 +35,7 @@ export function PttView() {
           {ptt.lines.map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}
         </select>
       </label>
+      <AudioRouteBar route={route} />
       <button
         type="button"
         className={cn('ptt', PHASE_CLASS[ptt.phase])}
