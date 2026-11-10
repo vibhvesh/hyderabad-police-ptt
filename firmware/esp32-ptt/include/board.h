@@ -10,6 +10,7 @@ enum BoardCodec : uint8_t {
   BOARD_CODEC_NONE = 0,
   BOARD_CODEC_ES8388 = 1,
   BOARD_CODEC_ES8311 = 2,
+  BOARD_CODEC_AC101 = 3,
 };
 
 enum BoardAdc : uint8_t {
@@ -55,11 +56,18 @@ struct BoardProfile {
   float batteryScale;
   float batteryEmpty;
   float batteryFull;
+  int extPttPin;
+  int extraPttPin;
+  int setupPin;
+  int headphonePin;
+  bool detectCodec;
 };
 
 const BoardProfile &boardProfile();
+void boardPrepareCodec(BoardProfile &board);
 bool boardAudioBegin();
 void boardSpeaker(bool on);
+bool boardHeadphoneInserted();
 i2s_chan_handle_t boardMic();
 i2s_chan_handle_t boardAmp();
 int boardRxBits();

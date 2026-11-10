@@ -19,7 +19,7 @@ The talk hostname serves the Talk page, `/api/lines`, `/health`, and `/ws`. Cont
 Sign in with `ADMIN_TOKEN` or the shared demo code. From the console you can:
 
 - Create, rename, enable, disable, and delete lines. Each line has a join link and a QR code that opens Talk on that line.
-- Add a handset to a line. The token is shown once. The server stores only its hash. Revoke it from the same screen. Battery, signal, and online state show on the handset row. The firmware selects a board with a PlatformIO env: the XIAO build, an ES8388 audio kit, or an ES8311 Korvo-2. See [docs/esp32-device.md](docs/esp32-device.md).
+- Add a handset to a line. The token is shown once. The server stores only its hash. Revoke it from the same screen. Battery, signal, and online state show on the handset row. The default firmware is the AI-Thinker ESP32-A1S Audio Kit used by Boondock. See [docs/esp32-device.md](docs/esp32-device.md).
 - Watch who is online, the current floor, and a short activity feed.
 - Read the communication log in India Standard Time, filter it, play the stored clip, and export CSV or TXT.
 - Choose the speech recognizer, English/Hindi translation, clip retention, and an optional ElevenLabs Scribe key. The key is stored in `DATA_DIR` and is not returned to the browser. Scribe runs only after local recognition fails, and it does not translate. Telugu text is kept as spoken and is not guessed into another language.

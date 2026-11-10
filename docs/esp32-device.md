@@ -2,7 +2,7 @@
 
 A battery handset for the same lines as the phones. It plays every transmission on the line and has one button for push-to-talk. Speech recognition and translation stay on the server. The handset only sends and plays 12 kHz 16-bit PCM, the same packets the browser uses.
 
-Firmware lives in `firmware/esp32-ptt`. It is split into small modules: Wi-Fi setup, the WebSocket client, the mic, the speaker, the packet codec, the jitter buffer, the button, the floor lease, the battery reading, the LED, and power. The pins and the codec live in `src/boards/`. The rest of the firmware asks that module which board it is.
+Firmware lives in `firmware/esp32-ptt`. It is split into small modules: Wi-Fi setup, the WebSocket client, the mic, the speaker, the packet codec, the jitter buffer, the button, the floor lease, the battery reading, the LED, and power. The pins and the codec live in `src/boards/`. The default board is the AI-Thinker ESP32-A1S Audio Kit, which is the board in the Boondock Echo kit. The XIAO build is the other one.
 
 This was checked with an emulated handset against the server. It has not been flashed onto a real board in this workspace.
 
@@ -98,46 +98,86 @@ Wi-Fi drops reconnect with a backoff from 1 second up to 30 seconds. A rejected 
 
 Every 5 seconds the handset publishes presence with battery percent, cell voltage, and Wi-Fi RSSI. The control room shows that next to the handset. The token is stored in flash and is not written to the serial log.
 
-## Board profiles
+## Boondock kit: ESP32-A1S Audio Kit
 
-The handset code does not name a GPIO. `src/boards/profiles.cpp` holds one profile per kit: I2S pins, the codec and its I2C address, the speaker-enable pin, the button, the LED, and the battery divider. `src/boards/board_audio.cpp` starts I2S from that profile and, when the kit has one, writes the ES8388 or ES8311 setup over I2C. A Korvo-2 also starts the ES7210, because that board's microphones are not inside the ES8311.
+This is a classic ESP32, not an ESP32-S3. The module on the board has 4 MB of flash and 8 MB of PSRAM. The firmware env is `esp32-a1s`, and `pio run` with no `-e` builds that env. It uses the onboard microphones, the onboard speaker amplifier, the green LED on GPIO22, and the keys.
 
-Pick the kit with the PlatformIO environment:
+At boot the firmware probes I2C and picks the codec that answers:
+
+| What answers | Pins it uses |
+| --- | --- |
+| ES8388 at `0x10` on SDA 33 / SCL 32 | BCLK 27, WS 25, data out 26, data in 35. The common Audio Kit. |
+| ES8388 at `0x10` on SDA 18 / SCL 23 | BCLK 5, WS 25, data out 26, data in 35. The other ES8388 revision. |
+| AC101 at `0x1A` on SDA 33 / SCL 32 | BCLK 27, WS 26, data out 25, data in 35. Older boards, silkscreen 2379. |
+
+If nothing answers, it keeps the first ES8388 map and says so on the serial port. Serial does not print the device token.
+
+The speaker amplifier is GPIO21, driven high only while audio is playing. Plugging in headphones pulls the detect pin low and the amplifier stays off, so the sound comes out of the jack instead of the speaker. On the ES8388 boards that pin is GPIO39. On the AC101 board it is GPIO5.
+
+Keys, all active low:
+
+| Key | GPIO | What it does |
+| --- | --- | --- |
+| KEY1 | 36 | Onboard push-to-talk. This pin has no pull-up, so press it firmly. |
+| KEY3, and header pin IO19 | 19 | The same net. Wire a large external button between header IO19 and GND. |
+| KEY6 | 5 | Also push-to-talk on ES8388 boards. On an AC101 board this pin is the headphone switch, so it is not a key. |
+| KEY2 | 13 | Not used. Only present when the DIP switch connects it. |
+| KEY4, KEY5 | 23, 18 | Not used. On the second ES8388 revision those pins are the I2C bus. |
+
+Hold KEY3, or the external button on IO19, for about 3 seconds from power-up to open the setup access point.
+
+The board charges a 3.7 V LiPo from its battery connector, but the V2.2 schematic does not route the cell to an ADC pin. GPIO34 is free and is an ADC input. If you add two 100k resistors, one from the cell positive to GPIO34 and one from GPIO34 to ground, the firmware reports the cell. A floating GPIO34 wanders, and those readings are ignored, so an unmodified kit leaves battery blank and still reports Wi-Fi signal.
+
+### DIP switch
+
+The five-position switch next to the SD card chooses what GPIO13 and GPIO15 connect to. This firmware does not use the SD card. Set it like this:
+
+| Position | Label | Setting | Why |
+| --- | --- | --- | --- |
+| 1 | IO13 to KEY2 | ON | KEY2 is available if you want it. |
+| 2 | IO13 to SD DATA3 | OFF | The SD card must not fight GPIO13. |
+| 3 | IO15 to SD CMD | OFF | GPIO15 is a boot strap. Leave it off the SD card. |
+| 4 | IO13 to JTAG MTCK | OFF | JTAG must not fight GPIO13. |
+| 5 | IO15 to JTAG MTDO | OFF | Leave GPIO15 alone at boot. |
+
+Do not turn on both position 1 and position 2. Do not turn on position 3 or 5 while flashing.
+
+### Flashing the Audio Kit
+
+The USB chip is a serial adapter on a classic ESP32. GPIO0 is also the codec's master clock, so auto-reset sometimes misses download mode.
 
 ```sh
 cd firmware/esp32-ptt
+pio run -e esp32-a1s -t upload
+pio device monitor
+```
+
+Upload runs at 115200. Close the monitor before uploading. If the tool sits on "Connecting" or "Failed to connect":
+
+1. Hold the header pin IO0 to GND.
+2. Tap the RST pin to GND, or press the reset button if the board has one.
+3. Release IO0 after the upload starts.
+
+If it still fails, unplug the headphones and the speaker, then try again. The codec can load GPIO0.
+
+## Other boards
+
+`src/boards/profiles.cpp` still has the XIAO, the LyraT v4.3, and the ESP32-S3-Korvo-2. Build one of those with `-e`:
+
+```sh
 pio run -e xiao_esp32s3_inmp441_max98357a
-pio run -e a1s_es8388
 pio run -e lyrat_v43_es8388
 pio run -e s3_korvo2_es8311
 ```
 
-`pio run` with no `-e` builds the XIAO. `pio run -e a1s_es8388 -t upload` flashes that kit.
+| Env | Board |
+| --- | --- |
+| `esp32-a1s` | AI-Thinker ESP32-A1S Audio Kit. Default. Classic ESP32, 4 MB flash, 8 MB PSRAM. |
+| `xiao_esp32s3_inmp441_max98357a` | Seeed XIAO ESP32-S3 with the INMP441 and MAX98357A wired above. |
+| `lyrat_v43_es8388` | ESP32-LyraT v4.3, ES8388, I2C 18/23, BCLK 5. |
+| `s3_korvo2_es8311` | ESP32-S3-Korvo-2. ES8311 speaker, ES7210 mics. BOOT is push-to-talk. |
 
-| Env | Board | Codec | Notes |
-| --- | --- | --- | --- |
-| `xiao_esp32s3_inmp441_max98357a` | Seeed XIAO ESP32-S3 | none (INMP441 and MAX98357A) | Wiring table above. Battery on GPIO6. |
-| `a1s_es8388` | AI-Thinker ESP32-A1S / Audio Kit, ES8388 | ES8388 at I2C `0x10` | MCLK 0, BCLK 27, WS 25, DOUT 26, DIN 35, I2C 33/32, speaker enable GPIO21. KEY1 (GPIO36) is push-to-talk. Uses the 4 MB `huge_app` partition. |
-| `lyrat_v43_es8388` | ESP32-LyraT v4.3 | ES8388 at I2C `0x10` | MCLK 0, BCLK 5, WS 25, DOUT 26, DIN 35, I2C 18/23, speaker enable GPIO21. REC (GPIO36) is push-to-talk. Uses the 4 MB `huge_app` partition. |
-| `s3_korvo2_es8311` | ESP32-S3-Korvo-2 | ES8311 speaker, ES7210 mics | MCLK 16, BCLK 9, WS 45, DOUT 8, DIN 10, I2C 17/18, speaker enable GPIO48. BOOT (GPIO0) is push-to-talk. |
-
-The A1S and the LyraT use the same codec and a different pin map. That split is why the profile exists: a Boondock Echo kit can be added as another profile and another `[env:...]` block once its model is confirmed. Copy the closest profile, change the pins and the codec, and add `-DBOARD_...` in `platformio.ini`. No other file should need a GPIO change.
-
-These kits have no battery divider on a free ADC pin, so they report signal strength and leave battery blank. The XIAO build still reports the cell.
-
-## Flash
-
-Install [PlatformIO](https://platformio.org/), then, for the XIAO:
-
-```sh
-cd firmware/esp32-ptt
-pio run -e xiao_esp32s3_inmp441_max98357a -t upload
-pio device monitor
-```
-
-The XIAO target is `seeed_xiao_esp32s3` with octal PSRAM. Hold the boot button if the upload cannot find the chip. Serial is the USB connector, 115200. The A1S and the LyraT use the classic ESP32 serial port. The Korvo-2 build uses the S3 USB-UART at the same speed.
-
-To use a WS2812 on the XIAO D4 pin instead of the onboard LED, set `ws2812Pin` to `5` and `ledPin` to `-1` in the XIAO profile, then build again.
+The XIAO upload is `pio run -e xiao_esp32s3_inmp441_max98357a -t upload`. Hold its boot button if the upload cannot find the chip. To use a WS2812 on XIAO D4 instead of the onboard LED, set `ws2812Pin` to `5` and `ledPin` to `-1` in that profile.
 
 ## Provision
 
@@ -148,7 +188,7 @@ To use a WS2812 on the XIAO D4 pin instead of the onboard LED, set `ws2812Pin` t
 5. Leave "Skip certificate check" off. The firmware trusts the Let's Encrypt ISRG Root X1, which is the root for `ptt.bowlinger.net`.
 6. Save. The handset restarts and joins the Wi-Fi.
 
-To change the network later, hold the PTT button while it boots, for about 3 seconds. That opens the setup access point again.
+To change the network later, hold the push-to-talk button while it boots, for about 3 seconds. On the Audio Kit that is KEY3 or the button on header IO19. That opens the setup access point again.
 
 The server must be the build that knows about handsets. On the self-hosted machine, rebuild only after you mean to:
 
@@ -173,7 +213,11 @@ docker run -d --name sanket-ptt --restart unless-stopped -p 8010:8010 \
 | Serial says the token was not accepted | The id and the token are a pair. A revoked handset will not connect. Add a new device. |
 | It connects, then the button does nothing for a few seconds | It is waiting for the clock. It needs DNS and UDP to `pool.ntp.org`. |
 | You hear the other phone, but they do not hear you | The line id on the handset must be the line the phone joined. A disabled line rejects the handset. |
-| Audio is quiet or missing | INMP441 L/R must be grounded. MAX98357A SD must be at VIN. Confirm D8–D10 and D1–D3. |
-| Battery percent is nonsense | The divider must be two equal resistors from the cell to GPIO6. A reading near 0 V means the wire is on the wrong pin. |
-| Setup page does not appear | Hold PTT for 3 seconds from the moment power is applied. Join `Sanket-Setup`, then open `http://192.168.4.1`. |
+| Audio is quiet or missing on the XIAO | INMP441 L/R must be grounded. MAX98357A SD must be at VIN. Confirm D8–D10 and D1–D3. |
+| The Audio Kit says the codec was not found | Power the board from the USB port, then read the serial line. An ES8388 answers at I2C `0x10`. An AC101 answers at `0x1A`. |
+| The speaker stays quiet and headphones work | A plugged-in jack mutes the amplifier on purpose. Unplug the jack. |
+| The XIAO battery percent is nonsense | The divider must be two equal resistors from the cell to GPIO6. |
+| The Audio Kit battery stays blank | The stock board does not wire the cell to an ADC. Add the 100k/100k divider to GPIO34. |
+| Setup page does not appear | On the Audio Kit, hold KEY3 or the IO19 button for 3 seconds from power-up. On the XIAO, hold the PTT button the same way. Join `Sanket-Setup`, then open `http://192.168.4.1`. |
+| Upload to the Audio Kit never connects | Hold IO0 to ground, tap reset, then release IO0. Use `pio run -e esp32-a1s -t upload`. |
 | TLS fails and the site is still Let's Encrypt | Uncheck skip-certificate only after the root in `include/ca_store.h` is ISRG Root X1. A different certificate needs that file updated. |

@@ -12,13 +12,15 @@ static const BoardProfile kXiao = {
   21, true,
   -1,
   6, 2.f, 3.30f, 4.20f,
+  -1, -1, 1, -1, false,
 };
 
-// AI-Thinker ESP32-A1S / Audio Kit, ES8388 build (the 2974 and 3378 modules).
-// I2C is GPIO33/32, not the LyraT's 18/23. Onboard mics use the codec ADC.
+// Boondock kit. Pins are the ES8388 v1 map until boardPrepareCodec probes the chip.
+// KEY1 is GPIO36. The large external button is header IO19. KEY6 is a second onboard PTT
+// unless that pin is the AC101 headphone switch or the ES8388 v2 bit clock.
 static const BoardProfile kA1s = {
-  "a1s_es8388",
-  "AI-Thinker ESP32-A1S Audio Kit, ES8388",
+  "esp32-a1s",
+  "AI-Thinker ESP32-A1S Audio Kit",
   {0, 27, 25, 26, 0, 16, true, 0, 27, 25, 35, 16},
   BOARD_CODEC_ES8388,
   BOARD_ADC_SAME,
@@ -27,10 +29,10 @@ static const BoardProfile kA1s = {
   36, true, false,
   22, false,
   -1,
-  -1, 2.f, 3.30f, 4.20f,
+  34, 2.f, 3.30f, 4.20f,
+  19, 5, 19, 39, true,
 };
 
-// ESP32-LyraT v4.3. Same codec as the A1S, different I2S and I2C pins.
 static const BoardProfile kLyrat = {
   "lyrat_v43_es8388",
   "ESP32-LyraT v4.3, ES8388",
@@ -43,10 +45,9 @@ static const BoardProfile kLyrat = {
   22, false,
   -1,
   -1, 2.f, 3.30f, 4.20f,
+  -1, -1, 36, -1, false,
 };
 
-// ESP32-S3-Korvo-2. The speaker codec is an ES8311. The microphones are an ES7210 on the same I2S bus.
-// BOOT (GPIO0) is the direct button. The other keys sit on an IO expander.
 static const BoardProfile kKorvo = {
   "s3_korvo2_es8311",
   "ESP32-S3-Korvo-2, ES8311 and ES7210",
@@ -59,16 +60,25 @@ static const BoardProfile kKorvo = {
   -1, true,
   -1,
   -1, 2.f, 3.30f, 4.20f,
+  -1, -1, 0, -1, false,
 };
 
+static BoardProfile gLive = kA1s;
+static bool gReady = false;
+
 const BoardProfile &boardProfile() {
-#if defined(BOARD_A1S_ES8388)
-  return kA1s;
+  if (!gReady) {
+#if defined(BOARD_XIAO_INMP441)
+    gLive = kXiao;
 #elif defined(BOARD_LYRAT_ES8388)
-  return kLyrat;
+    gLive = kLyrat;
 #elif defined(BOARD_S3_KORVO2_ES8311)
-  return kKorvo;
+    gLive = kKorvo;
 #else
-  return kXiao;
+    gLive = kA1s;
 #endif
+    if (gLive.detectCodec) boardPrepareCodec(gLive);
+    gReady = true;
+  }
+  return gLive;
 }

@@ -38,10 +38,12 @@ static String page(const HandsetConfig &seed) {
 
 bool provisionRequestedAtBoot() {
   const BoardProfile &board = boardProfile();
-  pinMode(board.buttonPin, board.buttonPullup ? INPUT_PULLUP : INPUT);
+  int pin = board.setupPin >= 0 ? board.setupPin : board.buttonPin;
+  bool pull = pin <= 33;
+  pinMode(pin, pull ? INPUT_PULLUP : INPUT);
   delay(30);
   auto held = [&]() {
-    int level = digitalRead(board.buttonPin);
+    int level = digitalRead(pin);
     return board.buttonActiveLow ? level == LOW : level == HIGH;
   };
   if (!held()) return false;
