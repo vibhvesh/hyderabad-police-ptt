@@ -23,7 +23,8 @@ export function PttView() {
   const [nameOpen, setNameOpen] = useState(false)
   const label = PHASE_LABEL[ptt.phase]
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col items-center gap-4 px-4 py-6">
+    <main className="mx-auto flex w-full max-w-md flex-1 flex-col items-center gap-4 px-4 py-4">
+      <AudioRouteBar route={route} />
       {!ptt.soundOn ? (
         <Button type="button" variant="secondary" className="w-full" onClick={ptt.unlock}>
           Tap to enable sound
@@ -35,7 +36,6 @@ export function PttView() {
           {ptt.lines.map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}
         </select>
       </label>
-      <AudioRouteBar route={route} />
       <button
         type="button"
         className={cn('ptt', PHASE_CLASS[ptt.phase])}
