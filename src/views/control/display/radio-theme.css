@@ -444,6 +444,32 @@
   .db-brand h1 { letter-spacing: 0.2em; }
 }
 
+.display-board {
+  color: #1b2838;
+  background: #f4efe6;
+  box-shadow: none;
+}
+.db-kpi,
+.db-rail,
+.db-map,
+.db-side {
+  color: #1b2838;
+  background: #fffdf8;
+  box-shadow: 0 1px 2px rgb(15 76 129 / 12%), inset 0 0 0 1px #d9c7a3;
+}
+.db-brand h1,
+.db-kpi strong,
+.db-rail h2,
+.db-side h2 { color: #0f4c81; }
+.db-kpi span,
+.db-brand p,
+.db-line small,
+.db-ticker small { color: #8c7348; }
+.db-line { background: #f7f3ea; }
+.db-map { background: #f7f3ea; }
+.db-alert { background: #fff1ee; color: #7f1d1d; }
+.db-knob { color: #0f4c81; }
+
 @media (prefers-reduced-motion: reduce) {
   .db-enter .db-rail,
   .db-enter .db-map,

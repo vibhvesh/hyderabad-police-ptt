@@ -1,4 +1,5 @@
 import { defaultLine, lineId, lineLang, type LineRecord } from '../src/lib/lines.ts'
+import { parseStt } from '../src/lib/stt.ts'
 import { voiceChoice } from '../src/lib/voice-choice.ts'
 import { readJsonFile, writeJsonFile } from './json-file.ts'
 
@@ -36,7 +37,7 @@ export class LinesStore {
       sourceLang: lineLang(input.sourceLang, 'te'),
       targetLang: lineLang(input.targetLang, 'en'),
       ttsProvider: voiceChoice(input.ttsProvider, 'free'),
-      asrProvider: voiceChoice(input.asrProvider, 'free'),
+      asrProvider: parseStt(input.asrProvider, 'free'),
       createdAt: now,
       updatedAt: now,
     }
@@ -55,7 +56,7 @@ export class LinesStore {
       sourceLang: patch.sourceLang === undefined ? current.sourceLang : lineLang(patch.sourceLang, current.sourceLang),
       targetLang: patch.targetLang === undefined ? current.targetLang : lineLang(patch.targetLang, current.targetLang),
       ttsProvider: patch.ttsProvider === undefined ? current.ttsProvider : voiceChoice(patch.ttsProvider, current.ttsProvider),
-      asrProvider: patch.asrProvider === undefined ? current.asrProvider : voiceChoice(patch.asrProvider, current.asrProvider),
+      asrProvider: patch.asrProvider === undefined ? current.asrProvider : parseStt(patch.asrProvider, current.asrProvider),
       updatedAt: this.nowIso(),
     }
     this.lines = this.lines.map((line) => (line.id === id ? next : line))
@@ -93,7 +94,7 @@ function normalize(value: unknown): LineRecord | null {
     sourceLang: lineLang(raw.sourceLang, 'te'),
     targetLang: lineLang(raw.targetLang, 'en'),
     ttsProvider: voiceChoice(raw.ttsProvider, 'free'),
-    asrProvider: voiceChoice(raw.asrProvider, 'free'),
+    asrProvider: parseStt(raw.asrProvider, 'free'),
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : now,
   }

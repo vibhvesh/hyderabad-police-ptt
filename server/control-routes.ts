@@ -1,6 +1,7 @@
 import type http from 'node:http'
 import { lineId, lineTopic, type LineRecord } from '../src/lib/lines.ts'
 import type { ConsoleSettingsStore } from './console-settings.ts'
+import type { SttService } from './stt/service.ts'
 import type { DeviceStore } from './devices.ts'
 import type { LinesStore } from './lines-store.ts'
 import type { RadioLog, ClipQuery } from './radio-log.ts'
@@ -20,6 +21,7 @@ type Deps = {
   jsonBody: (req: http.IncomingMessage, res: http.ServerResponse, limit: number) => Promise<Record<string, unknown> | null>
   admin: (req: http.IncomingMessage, res: http.ServerResponse) => boolean
   testElevenLabs: () => Promise<{ ok: true } | { ok: false; message: string }>
+  stt: SttService
 }
 
 export async function handleControl(req: http.IncomingMessage, res: http.ServerResponse, deps: Deps): Promise<boolean> {
@@ -94,7 +96,7 @@ export async function handleControl(req: http.IncomingMessage, res: http.ServerR
     }
     const body = await deps.jsonBody(req, res, 8_192)
     if (!body) return true
-    const created = deps.devices.create(id, String(body.name ?? ''))
+    const created = deps.devices.create(id, String(body.name ?? ''), { listenOnly: body.listenOnly === true })
     if ('error' in created) {
       deps.send(res, 400, { error: 'device', message: created.error })
       return true
@@ -129,6 +131,16 @@ export async function handleControl(req: http.IncomingMessage, res: http.ServerR
     deps.send(res, 200, view)
     return true
   }
+  if (url.pathname === '/api/control/stt' && req.method === 'GET') {
+    deps.send(res, 200, deps.stt.view())
+    return true
+  }
+  if (url.pathname === '/api/control/stt' && req.method === 'PUT') {
+    const body = await deps.jsonBody(req, res, 16_384)
+    if (!body) return true
+    deps.send(res, 200, deps.stt.save(body))
+    return true
+  }
   if (req.method === 'POST' && url.pathname === '/api/control/elevenlabs/test') {
     deps.send(res, 200, await deps.testElevenLabs())
     return true
@@ -157,7 +169,10 @@ export async function handleControl(req: http.IncomingMessage, res: http.ServerR
 }
 
 function deviceViews(deps: Deps) {
-  return deps.devices.list().map((device) => ({ ...device, ...deps.monitor.handset(device.id) }))
+  return deps.devices.list().map((device) => {
+    const live = deps.monitor.handset(device.id)
+    return { ...device, ...live, listenOnly: Boolean(device.listenOnly || live.listenOnly) }
+  })
 }
 
 function viewLine(line: LineRecord) {

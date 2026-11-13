@@ -1,3 +1,4 @@
+import type { SttChoice } from './stt.ts'
 import type { VoiceChoice } from './voice-choice.ts'
 
 export type LineLang = 'te' | 'en' | 'hi'
@@ -9,7 +10,7 @@ export type LineRecord = {
   sourceLang: LineLang
   targetLang: LineLang
   ttsProvider: VoiceChoice
-  asrProvider: VoiceChoice
+  asrProvider: SttChoice
   createdAt: string
   updatedAt: string
 }

@@ -36,6 +36,8 @@ export type Config = {
   demoAccessCode: string | null
   demoOrigins: string[]
   elevenLabsApiKey: string | null
+  sttDefault: string | null
+  secretsKey: string | null
   publicHost: string | null
   adminHost: string | null
 }
@@ -91,6 +93,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .map((origin) => origin.trim())
       .filter(Boolean),
     elevenLabsApiKey: blank(env.ELEVENLABS_API_KEY),
+    sttDefault: blank(env.STT_DEFAULT),
+    secretsKey: blank(env.SECRETS_KEY) ?? blank(env.ADMIN_TOKEN),
     publicHost: hostnameOf(env.PUBLIC_HOST),
     adminHost: hostnameOf(env.ADMIN_HOST),
   }

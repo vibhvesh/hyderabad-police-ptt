@@ -17,5 +17,5 @@ export function elevenLabsSelectable(configured: boolean): { disabled: boolean; 
 }
 
 export function latestProviderWarning(items: Array<{ lineId: string; text: string }>, lineId: string): string | null {
-  return items.find((item) => item.lineId === lineId && item.text.startsWith('ElevenLabs failed'))?.text ?? null
+  return items.find((item) => item.lineId === lineId && item.text.includes('failed, used free'))?.text ?? null
 }

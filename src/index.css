@@ -1,9 +1,9 @@
 @import 'tailwindcss';
 
 @theme inline {
-  --color-background: #f4f7fb;
-  --color-foreground: #102033;
-  --color-primary: #0c3d82;
+  --color-background: #f4efe6;
+  --color-foreground: #1b2838;
+  --color-primary: #0f4c81;
   --color-primary-foreground: #ffffff;
   --color-secondary: #e7f6ee;
   --color-secondary-foreground: #0e5c32;
@@ -33,11 +33,9 @@ body,
 body {
   margin: 0;
   background:
-    radial-gradient(900px 420px at 0% -10%, #dbeafe, transparent 55%),
-    radial-gradient(700px 380px at 100% 0%, #dcfce7, transparent 50%),
-    #f4f7fb;
-  color: #102033;
-  font-family: 'Segoe UI', 'Noto Sans', 'Helvetica Neue', sans-serif;
+    linear-gradient(180deg, #f7f3ea 0%, #e7f0f8 100%);
+  color: #1b2838;
+  font-family: 'Segoe UI', 'Segoe UI Variable', 'Noto Sans', 'Helvetica Neue', sans-serif;
   overscroll-behavior: none;
 }
 

@@ -110,6 +110,7 @@ export function DisplayBoard() {
       speaker: floor?.name ?? null,
       phones: counts.phones,
       handsets: counts.handsets,
+      listeners: wall.devices.filter((device) => device.lineId === line.id && device.listenOnly && !device.revokedAt).length,
       level,
     }
   })

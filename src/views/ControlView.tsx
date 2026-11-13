@@ -10,8 +10,10 @@ import { Input } from '@/components/ui/input'
 import { controlFetch, saveControlToken } from '@/lib/control-api'
 import { formatIst } from '@/lib/ist'
 import type { LineLang } from '@/lib/lines'
+import type { SttChoice } from '@/lib/stt'
+import { SttPanel } from '@/views/control/SttPanel'
 
-type Line = { id: string; name: string; enabled: boolean; sourceLang: LineLang; targetLang: LineLang; ttsProvider: VoiceChoice; asrProvider: VoiceChoice; topic: string }
+type Line = { id: string; name: string; enabled: boolean; sourceLang: LineLang; targetLang: LineLang; ttsProvider: VoiceChoice; asrProvider: SttChoice; topic: string }
 type User = { lineId: string; id: string; name: string; lastSeen: number; location: string | null }
 type Floor = { lineId: string; id: string; name: string; since: number }
 type Activity = { at: string; lineId: string; text: string }
@@ -66,7 +68,7 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
   const [filterQ, setFilterQ] = useState('')
-  const [draft, setDraft] = useState({ id: '', name: '', sourceLang: 'te' as LineLang, targetLang: 'en' as LineLang, ttsProvider: 'free' as VoiceChoice, asrProvider: 'free' as VoiceChoice })
+  const [draft, setDraft] = useState({ id: '', name: '', sourceLang: 'te' as LineLang, targetLang: 'en' as LineLang, ttsProvider: 'free' as VoiceChoice, asrProvider: 'free' as SttChoice })
   const [code, setCode] = useState('')
   const [token, setToken] = useState('')
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -233,7 +235,7 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <nav className="flex flex-wrap gap-2 px-5 pt-4 text-sm" aria-label="Control room">
+      <nav className="flex flex-wrap gap-2 px-5 pt-4 text-sm md:hidden" aria-label="Control room">
         <a className={page.name === 'dashboard' ? 'rounded-full bg-[#0c3d82] px-3 py-1 font-semibold text-white' : 'rounded-full border px-3 py-1 font-semibold text-[#0c3d82]'} href="#/control/display">Display Board</a>
         <a className={page.name === 'manage' ? 'rounded-full bg-[#0c3d82] px-3 py-1 font-semibold text-white' : 'rounded-full border px-3 py-1 font-semibold text-[#0c3d82]'} href="#/control/manage">Settings</a>
         <a className="rounded-full border px-3 py-1 font-semibold text-[#0c3d82]" href="#/reference">Reference</a>
@@ -356,6 +358,7 @@ export function ControlView({ talkOrigin }: { talkOrigin: string | null }) {
           ))}
         </ul>
       </section>
+      <SttPanel />
       {settings ? (
         <section className="rounded-xl bg-white p-4">
           <h2 className="font-semibold">Processing</h2>
@@ -404,6 +407,7 @@ function LangSelect({ value, onChange }: { value: LineLang; onChange: (value: Li
 function LineRow({ line, talkOrigin, configured, onChange, onNote, onIssued }: { line: Line; talkOrigin: string | null; configured: boolean; onChange: () => void; onNote: (value: string) => void; onIssued: (value: { name: string; id: string; token: string }) => void }) {
   const [name, setName] = useState(line.name)
   const [deviceName, setDeviceName] = useState('')
+  const [listenOnly, setListenOnly] = useState(false)
   const [qr, setQr] = useState('')
   const origin = talkOrigin || window.location.origin
   const link = `${origin}/#/?line=${line.id}`
@@ -418,7 +422,7 @@ function LineRow({ line, talkOrigin, configured, onChange, onNote, onIssued }: {
   }
   async function addDevice(event: FormEvent) {
     event.preventDefault()
-    const response = await controlFetch(`/api/control/lines/${line.id}/devices`, { method: 'POST', body: JSON.stringify({ name: deviceName }) })
+    const response = await controlFetch(`/api/control/lines/${line.id}/devices`, { method: 'POST', body: JSON.stringify({ name: deviceName, listenOnly }) })
     const body = (await response.json()) as { token?: string; name?: string; id?: string; message?: string }
     if (!response.ok || !body.token || !body.id) {
       onNote(body.message ?? 'The handset was not added.')
@@ -426,6 +430,7 @@ function LineRow({ line, talkOrigin, configured, onChange, onNote, onIssued }: {
     }
     onIssued({ name: body.name ?? deviceName, id: body.id, token: body.token })
     setDeviceName('')
+    setListenOnly(false)
     onNote('Handset added. Copy the token now.')
     onChange()
   }
@@ -446,8 +451,9 @@ function LineRow({ line, talkOrigin, configured, onChange, onNote, onIssued }: {
           onTts={(ttsProvider) => void patch({ ttsProvider })}
           onAsr={(asrProvider) => void patch({ asrProvider })}
         />
-        <form className="flex flex-wrap gap-2" onSubmit={(event) => void addDevice(event)}>
+        <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => void addDevice(event)}>
           <Input placeholder="Handset name" value={deviceName} onChange={(event) => setDeviceName(event.target.value)} required />
+          <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={listenOnly} onChange={(event) => setListenOnly(event.target.checked)} /> Listen only</label>
           <Button type="submit" variant="outline">Add device</Button>
         </form>
         <p className="break-all text-xs text-slate-500">{link}</p>

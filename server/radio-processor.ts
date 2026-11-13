@@ -1,5 +1,6 @@
 import type { LineLang } from '../src/lib/lines.ts'
 import { translatePlan } from '../src/lib/server-caption.ts'
+import { resolveStt, type SttProviderId } from '../src/lib/stt.ts'
 import type { VoiceChoice } from '../src/lib/voice-choice.ts'
 import type { Config } from './config.ts'
 import type { ConsoleSettings } from './console-settings.ts'
@@ -20,9 +21,11 @@ export async function processRadioClip(input: {
   target: LineLang
   settings: ConsoleSettings
   config: Config
-  asrProvider?: VoiceChoice
+  asrProvider?: VoiceChoice | SttProviderId | string
+  globalStt?: string
   elevenLabsKey?: string | null
   scribe?: (apiKey: string, wav: Buffer, language: string) => Promise<string>
+  cloud?: (provider: SttProviderId) => Promise<string>
 }): Promise<CaptionResult> {
   const heard = await recognize(input)
   if (!heard.transcript) {
@@ -56,20 +59,23 @@ async function recognize(input: {
   source: LineLang
   settings: ConsoleSettings
   config: Config
-  asrProvider?: VoiceChoice
+  asrProvider?: VoiceChoice | SttProviderId | string
+  globalStt?: string
   elevenLabsKey?: string | null
   scribe?: (apiKey: string, wav: Buffer, language: string) => Promise<string>
+  cloud?: (provider: SttProviderId) => Promise<string>
 }): Promise<{ transcript: string | null; note: string | null; status: 'ready' | 'unconfigured' | 'failed'; warning: string | null }> {
-  const choice = input.asrProvider === 'elevenlabs' ? 'elevenlabs' : 'free'
+  const choice = resolveStt(input.asrProvider, input.globalStt ?? 'free')
   const heard = await recognizeForLine({
     choice,
     apiKey: input.elevenLabsKey ?? null,
     wav: input.wav,
     language: input.source,
     scribe: input.scribe,
+    cloud: input.cloud,
     local: () => primaryTranscript(input),
   })
-  if (heard.transcript || choice === 'elevenlabs') return heard
+  if (heard.transcript || choice !== 'free') return heard
   const key = input.elevenLabsKey ?? null
   if (input.settings.elevenLabsFallback && key && input.scribe) {
     try {
