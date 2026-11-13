@@ -16,7 +16,7 @@ export class Relay {
   private sessions = new Map<WebSocket, DevicePrincipal>()
   private links = new Map<string, number>()
   tap: RelayTap = () => {}
-  authenticate: (id: string, token: string) => { id: string; lineId: string; name: string } | null = () => null
+  authenticate: (id: string, token: string) => { id: string; lineId: string; name: string; listenOnly?: boolean } | null = () => null
   stillAllowed: (id: string) => boolean = () => false
   reserved: (id: string) => boolean = () => false
   onLink: (id: string, online: boolean, listenOnly?: boolean) => void = () => {}
@@ -102,7 +102,7 @@ export class Relay {
         socket.close()
         return
       }
-      const principal: DevicePrincipal = { ...found, listenOnly: device.listenOnly, rate: device.rate }
+      const principal: DevicePrincipal = { ...found, listenOnly: device.listenOnly || found.listenOnly === true, rate: device.rate }
       this.bind(socket, principal)
       socket.send(JSON.stringify({
         op: 'ready',

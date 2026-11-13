@@ -1,14 +1,14 @@
-# Local or Raspberry Pi server. This file does not start a paid translator or a mailbox.
+# Sanket PTT v2. The image is built from the multi-arch node:22-bookworm-slim base,
+# so the same compose file runs on linux/amd64 and linux/arm64.
 services:
   sanket:
-    build: .
+    build:
+      context: .
+    image: sanket-ptt:local
     ports:
-      - "8080:8080"
+      - "${PORT:-8080}:8080"
     env_file:
       - .env
     volumes:
-      - sanket-data:/data
+      - ${SANKET_DATA:-./data}:/data
     restart: unless-stopped
-
-volumes:
-  sanket-data:

@@ -10,6 +10,7 @@ export type DeviceRecord = {
   tokenHash: string
   createdAt: string
   revokedAt: string | null
+  listenOnly: boolean
 }
 
 export type PublicDevice = {
@@ -18,6 +19,7 @@ export type PublicDevice = {
   name: string
   createdAt: string
   revokedAt: string | null
+  listenOnly: boolean
 }
 
 type Created = { device: PublicDevice; token: string }
@@ -38,14 +40,14 @@ export class DeviceStore {
     return this.devices.map(publish)
   }
 
-  create(lineIdRaw: string, nameRaw: string): Created | { error: string } {
+  create(lineIdRaw: string, nameRaw: string, options?: { listenOnly?: boolean }): Created | { error: string } {
     const line = lineId(lineIdRaw)
     if (!line) return { error: 'Line ids use letters, numbers, and hyphens.' }
     const name = cleanName(nameRaw)
     const id = this.freshId()
     const token = `sdt_${randomBytes(24).toString('base64url')}`
     const now = this.nowIso()
-    const record: DeviceRecord = { id, lineId: line, name, tokenHash: sha256(token), createdAt: now, revokedAt: null }
+    const record: DeviceRecord = { id, lineId: line, name, tokenHash: sha256(token), createdAt: now, revokedAt: null, listenOnly: options?.listenOnly === true }
     this.devices = [...this.devices, record]
     this.save()
     return { device: publish(record), token }
@@ -81,11 +83,11 @@ export class DeviceStore {
     return !!found && !found.revokedAt
   }
 
-  verify(id: string, token: string): { id: string; lineId: string; name: string } | null {
+  verify(id: string, token: string): { id: string; lineId: string; name: string; listenOnly: boolean } | null {
     const found = this.devices.find((item) => item.id === id)
     if (!found || found.revokedAt) return null
     if (!hashMatches(found.tokenHash, token)) return null
-    return { id: found.id, lineId: found.lineId, name: found.name }
+    return { id: found.id, lineId: found.lineId, name: found.name, listenOnly: found.listenOnly }
   }
 
   private freshId(): string {
@@ -102,7 +104,7 @@ export class DeviceStore {
 }
 
 function publish(record: DeviceRecord): PublicDevice {
-  return { id: record.id, lineId: record.lineId, name: record.name, createdAt: record.createdAt, revokedAt: record.revokedAt }
+  return { id: record.id, lineId: record.lineId, name: record.name, createdAt: record.createdAt, revokedAt: record.revokedAt, listenOnly: record.listenOnly }
 }
 
 function cleanName(value: string): string {
@@ -124,5 +126,6 @@ function normalize(value: unknown): DeviceRecord | null {
     tokenHash: raw.tokenHash,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
     revokedAt: typeof raw.revokedAt === 'string' ? raw.revokedAt : null,
+    listenOnly: raw.listenOnly === true,
   }
 }

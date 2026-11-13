@@ -44,9 +44,18 @@ export default function App() {
   }, [showControl, showTranscribe, showReference])
 
   return (
-    <div className={showControl ? 'flex min-h-dvh w-full flex-col' : 'mx-auto flex min-h-dvh w-full max-w-5xl flex-col'}>
+    <div className={showControl ? 'flex min-h-dvh w-full bg-[#f4efe6]' : 'mx-auto flex min-h-dvh w-full max-w-5xl flex-col'}>
+      {showControl ? (
+        <aside className="azure-nav hidden w-56 shrink-0 flex-col gap-1 bg-[#0f4c81] p-3 text-sm text-[#f4efe6] md:flex" aria-label="Admin">
+          <p className="px-2 pb-2 text-xs font-semibold tracking-[0.14em] uppercase">Sanket</p>
+          <a className="rounded px-2 py-2 hover:bg-white/10" href="#/control/display">Display Board</a>
+          <a className="rounded px-2 py-2 hover:bg-white/10" href="#/control/manage">Settings</a>
+          <a className="rounded px-2 py-2 hover:bg-white/10" href="#/reference">Reference</a>
+        </aside>
+      ) : null}
+      <div className={showControl ? 'flex min-w-0 flex-1 flex-col' : 'contents'}>
       <header className="sticky top-0 z-10">
-        <div className="flex flex-col gap-2 bg-[#0c3d82] px-4 py-3 text-white sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+        <div className="flex flex-col gap-2 bg-[#0f4c81] px-4 py-3 text-white sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           <div className="min-w-0 sm:flex-1">
             <p className="text-base leading-tight font-bold tracking-wide">{showControl ? 'Control room' : showTranscribe ? TRANSCRIBE_PRODUCT : PRODUCT}</p>
             <p className="text-xs text-blue-100">{showControl ? 'Wall display' : 'Push to talk'}</p>
@@ -58,7 +67,7 @@ export default function App() {
             {surface !== 'talk' ? <NavLink href="#/reference" current={route === 'reference'}>Reference</NavLink> : null}
           </nav>
         </div>
-        <p className="bg-[#0e8a4a] px-4 py-2 text-center text-sm font-semibold tracking-wide text-white" role="note">
+        <p className="bg-[#c4b08a] px-4 py-2 text-center text-sm font-semibold tracking-wide text-[#1b2838]" role="note">
           {DISCLAIMER}
         </p>
       </header>
@@ -69,6 +78,7 @@ export default function App() {
       {surface === 'talk' && route === 'control' ? (
         <main className="px-4 py-8 text-sm text-slate-700">The control room is not on this address.</main>
       ) : null}
+      </div>
     </div>
   )
 }

@@ -5,6 +5,7 @@ export type RailLine = {
   speaker: string | null
   phones: number
   handsets: number
+  listeners: number
   level: number
 }
 
@@ -27,7 +28,7 @@ export function LineRail({ lines, hotId, onHover, onLeave }: { lines: RailLine[]
               <i className={`db-light ${line.status}`} aria-label={line.status} />
               <span>
                 <strong>{line.name}</strong>
-                <small>{line.speaker ? line.speaker : 'Idle'} · {line.phones} phone · {line.handsets} handset</small>
+                <small>{line.speaker ? line.speaker : 'Idle'} · {line.phones} phone · {line.handsets} handset{line.listeners ? ` · ${line.listeners} listening` : ''}</small>
               </span>
               <span className="db-vu" aria-hidden="true"><i style={{ width: `${Math.max(6, Math.min(100, line.level))}%` }} /></span>
             </a>

@@ -1,3 +1,4 @@
+import { storedStt, type SttProviderId } from '../src/lib/stt.ts'
 import type { Config } from './config.ts'
 import { readJsonFile, writeJsonFile } from './json-file.ts'
 
@@ -9,6 +10,7 @@ export type ConsoleSettings = {
   translateProvider: TranslateChoice
   elevenLabsFallback: boolean
   retentionDays: number
+  sttProvider: SttProviderId
 }
 
 export type PublicConsoleSettings = ConsoleSettings & {
@@ -22,6 +24,7 @@ export function defaultConsoleSettings(config: Config): ConsoleSettings {
     translateProvider: config.translateProvider === 'opus' ? 'opus' : 'none',
     elevenLabsFallback: false,
     retentionDays: 14,
+    sttProvider: storedStt(config.sttDefault, 'free'),
   }
 }
 
@@ -63,5 +66,6 @@ function sanitize(value: Partial<ConsoleSettings>, fallback: ConsoleSettings): C
     translateProvider: translate === 'opus' || translate === 'none' ? translate : fallback.translateProvider,
     elevenLabsFallback: typeof value.elevenLabsFallback === 'boolean' ? value.elevenLabsFallback : fallback.elevenLabsFallback,
     retentionDays: Number.isFinite(days) ? Math.min(365, Math.max(1, Math.round(days))) : fallback.retentionDays,
+    sttProvider: storedStt(value.sttProvider, fallback.sttProvider),
   }
 }

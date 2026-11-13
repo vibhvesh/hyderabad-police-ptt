@@ -42,6 +42,9 @@ import { isAdminApi, surfaceFromHeaders } from '../src/lib/host-surface.ts'
 import { lineTopic } from '../src/lib/lines.ts'
 import { KEY_MISSING } from '../src/lib/voice-choice.ts'
 import { speakElevenLabs, testElevenLabsKey } from './elevenlabs-voice.ts'
+import { transcribeCloud } from './stt/adapters.ts'
+import { SttSecrets } from './stt/secrets.ts'
+import { SttService } from './stt/service.ts'
 import { speakForLine } from './line-voice.ts'
 import { DeviceStore } from './devices.ts'
 import { LinesStore } from './lines-store.ts'
@@ -116,6 +119,12 @@ export function createApp(options: AppOptions = {}) {
   const lines = new LinesStore(path.join(config.dataDir, 'console', 'lines.json'), () => new Date(now()).toISOString())
   const devices = new DeviceStore(path.join(config.dataDir, 'console', 'devices.json'), () => new Date(now()).toISOString())
   const consoleSettings = new ConsoleSettingsStore(path.join(config.dataDir, 'console', 'settings.json'), defaultConsoleSettings(config), Boolean(config.elevenLabsApiKey))
+  const stt = new SttService(
+    new SttSecrets(path.join(config.dataDir, 'console', 'stt-secrets.json'), config.secretsKey ?? ''),
+    consoleSettings,
+    config.elevenLabsApiKey,
+    config.asrProvider !== 'none',
+  )
   const radioLog = new RadioLog(path.join(config.dataDir, 'radio'))
   const captions = new CaptionQueue<ClosedClip>(async (clip) => {
     const id = randomUUID()
@@ -137,8 +146,14 @@ export function createApp(options: AppOptions = {}) {
       settings,
       config,
       asrProvider: clip.line.asrProvider,
-      elevenLabsKey: config.elevenLabsApiKey,
+      globalStt: settings.sttProvider,
+      elevenLabsKey: stt.keyFor('elevenlabs'),
       scribe: async (apiKey, wav, language) => gatewayFor(apiKey).convert(wav, language),
+      cloud: async (provider) => {
+        const key = stt.keyFor(provider)
+        if (!key) throw new Error('Speech provider is not configured.')
+        return transcribeCloud({ provider, wav: clip.wav, language: clip.line.sourceLang, key })
+      },
     })
     const saved = radioLog.finish(id, {
       transcript: result.transcript,
@@ -266,6 +281,7 @@ export function createApp(options: AppOptions = {}) {
       send,
       jsonBody,
       admin: (request, response) => allowAdmin(request, response),
+      stt,
       testElevenLabs: async () => {
         if (!config.elevenLabsApiKey) return { ok: false, message: KEY_MISSING }
         return testElevenLabsKey(config.elevenLabsApiKey, fetchVoice)

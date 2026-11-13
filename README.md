@@ -1,5 +1,13 @@
 # Sanket PTT
 
+Install on a Raspberry Pi (64-bit) or an x86_64 Ubuntu/Debian server:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/vibhvesh/hyderabad-police-ptt/main/install.sh | sudo bash
+```
+
+Optional hostnames: `CLIENT_HOST=talk.example.com ADMIN_HOST=admin.example.com` in front of that command. The script detects arm64 versus x86_64, installs Docker if it is missing, writes an env file of placeholders, starts the container, and prints the client URL and the admin URL. On a Pi, local Whisper stays off so the board stays light; choose a cloud speech provider in the admin Settings page. See [docs/install.md](docs/install.md).
+
 A browser push-to-talk demo and a separate transcription page. One channel is open by default: **SANKET-1**. Hold the button to talk. Only one person speaks at a time.
 
 **Demo only, not for professional use.**

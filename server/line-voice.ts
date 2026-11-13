@@ -1,15 +1,28 @@
+import { sttWarning, type SttProviderId } from '../src/lib/stt.ts'
 import { ASR_WARNING, VOICE_WARNING, type VoiceChoice } from '../src/lib/voice-choice.ts'
 
 export type LocalTranscript = { transcript: string | null; note: string | null; status: 'ready' | 'unconfigured' | 'failed' }
 
 export async function recognizeForLine(input: {
-  choice: VoiceChoice
+  choice: VoiceChoice | SttProviderId | string
   apiKey: string | null
   wav: Buffer
   language: string
   scribe?: (apiKey: string, wav: Buffer, language: string) => Promise<string>
+  cloud?: (provider: SttProviderId) => Promise<string>
   local: () => Promise<LocalTranscript>
 }): Promise<LocalTranscript & { warning: string | null }> {
+  if (input.choice !== 'free' && input.choice !== 'elevenlabs' && input.choice !== 'inherit') {
+    const provider = input.choice as SttProviderId
+    try {
+      const text = (await input.cloud?.(provider) ?? '').trim()
+      if (text) return { transcript: text, note: null, status: 'ready', warning: null }
+    } catch {
+      /* Drop the provider error so a key cannot leak into the log. */
+    }
+    const heard = await input.local()
+    return { ...heard, warning: sttWarning(provider) }
+  }
   if (input.choice !== 'elevenlabs') {
     const heard = await input.local()
     return { ...heard, warning: null }
