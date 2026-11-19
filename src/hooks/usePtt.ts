@@ -407,8 +407,12 @@ export function usePtt(route: { inputId?: string; outputId?: string } = {}) {
     setDenied(false)
     const radio = radioRef.current
     const floor = floorRef.current
-    if (!radio?.online) return
-    if (floor && floor.id !== meRef.current) return
+    if (!radio?.online || (floor && floor.id !== meRef.current)) {
+      holdingRef.current = false
+      setHolding(false)
+      setDenied(true)
+      return
+    }
     const micOk = await ensureMic()
     if (!holdingRef.current) return
     if (!micOk) {
