@@ -58,7 +58,11 @@ export function PttView() {
           event.preventDefault()
           if (shouldEndHold('touchend')) ptt.up()
         }}
-        onPointerCancel={(event) => event.preventDefault()}
+        onPointerCancel={(event) => {
+          event.preventDefault()
+          ptt.up()
+        }}
+        onLostPointerCapture={() => ptt.up()}
         onPointerLeave={() => undefined}
         onContextMenu={(event) => event.preventDefault()}
       >
